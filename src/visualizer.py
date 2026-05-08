@@ -375,7 +375,7 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 )
                 fig.add_annotation(
                     x=cx + sample.width / 2, y=(dy0 + dy1) / 2,
-                    text=f"━ 더니지 {int(dun)}mm ━",
+                    text=f"━ 받침목 {int(dun)}mm ━",
                     showarrow=False,
                     font=dict(size=9, color="white"),
                 )
@@ -572,7 +572,7 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 ):
                     fig.add_trace(tr)
                 cursor_x += sample.length + gap
-            # 다음 단과의 더니지 (얇은 갈색 박스)
+            # 다음 단과의 받침목 (얇은 갈색 박스)
             if layer < used_layers - 1:
                 for tr in _box_mesh(
                     edge, cy, cursor_z + sample.thickness,
@@ -580,7 +580,7 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                     cy + sample.width,
                     cursor_z + sample.thickness + dun,
                     "#8b4513", 0.85,
-                    f"더니지 {int(dun)}mm",
+                    f"받침목 {int(dun)}mm",
                     show_edges=False,
                 ):
                     fig.add_trace(tr)

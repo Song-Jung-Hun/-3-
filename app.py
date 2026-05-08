@@ -84,7 +84,7 @@ with st.sidebar:
     st.divider()
     st.subheader("📏 패널 적재 간격")
     panel_gap = st.slider(
-        "패널 사이 더니지 (mm)", 50, 200, 100, 10,
+        "패널 사이 받침목 (mm)", 50, 200, 100, 10,
         help="목재 받침 두께. 결박벨트·지게차 포크 진입 공간. PCI MNL-122 권장 75~100mm.",
     )
     edge_clearance = st.slider(
@@ -92,7 +92,7 @@ with st.sidebar:
         help="결박 작업 공간. KOSHA 화물 결박 가이드 기준 150~200mm 권장.",
     )
     dunnage_gap = st.slider(
-        "적층 단 사이 더니지 (mm)", 50, 200, 100, 10,
+        "적층 단 사이 받침목 (mm)", 50, 200, 100, 10,
         help="패널을 위로 쌓을 때 단 사이 받침 두께.",
     )
     spacing = SpacingParams(
@@ -251,7 +251,7 @@ if not modules and not panels:
 raw_result = pack_items(modules, panels, trucks, road, spacing)
 
 # ---------------------------------------------------------------------------
-# 회차별 트럭 변경 UI — 사용자가 자동 결과를 직접 수정 가능
+# 회차별 화물차 선택 UI — 사용자가 자동 결과를 직접 수정 가능
 # ---------------------------------------------------------------------------
 
 if "truck_overrides" not in st.session_state:
@@ -263,7 +263,7 @@ st.session_state.truck_overrides = {
     k: v for k, v in st.session_state.truck_overrides.items() if k in valid_trip_nos
 }
 
-with st.expander("🔄 회차별 트럭 변경 (선택 사항)", expanded=False):
+with st.expander("🔄 회차별 화물차 선택 (선택 사항)", expanded=False):
     st.caption(
         "기본은 알고리즘이 자동 선택한 트럭이 사용됩니다. "
         "원하는 회차의 트럭을 직접 다른 종류로 바꾸면 그 트럭으로 적재 가능한지 자동 검사됩니다. "
@@ -327,7 +327,7 @@ if result.blocked:
 st.markdown("### 🚛 트럭 운송 회차별 적재 내역")
 st.caption(
     "회차 = 트럭 1대가 공장→현장으로 1번 운반하는 것. "
-    "더니지 무게는 적층 단 사이 받침 목재(소나무 500kg/m³, 100×100mm) 합산."
+    "받침목 무게는 적층 단 사이 받침 목재(소나무 500kg/m³, 100×100mm) 합산."
 )
 trip_rows = []
 for trip in result.trips:
@@ -350,7 +350,7 @@ for trip in result.trips:
             "적재배치": extra,
             "아이템": item_names,
             "화물중량(kg)": int(trip.cargo_weight),
-            "더니지(kg)": int(trip.dunnage_weight),
+            "받침목(kg)": int(trip.dunnage_weight),
             "총중량(kg)": int(trip.total_weight),
             "적재율(%)": round(trip.utilization, 1),
             "광폭검토": "✓" if trip.wide_check else "",
@@ -376,7 +376,7 @@ if result.trips:
         x="회차",
         y="적재율(%)",
         color="종류",
-        title="회차별 적재율 (화물 + 더니지 / 트럭 한도)",
+        title="회차별 적재율 (화물 + 받침목 / 트럭 한도)",
         text="적재율(%)",
     )
     fig_util.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
@@ -390,9 +390,9 @@ if result.trips:
 
 st.markdown("### 🎨 트럭 적재 시각화")
 st.caption(
-    f"패널 사이 더니지 **{int(spacing.panel_gap_mm)}mm**, "
+    f"패널 사이 받침목 **{int(spacing.panel_gap_mm)}mm**, "
     f"양끝 여유 **{int(spacing.truck_edge_clearance_mm)}mm**, "
-    f"적층 더니지 **{int(spacing.dunnage_thickness_mm)}mm** 적용. "
+    f"적층 받침목 **{int(spacing.dunnage_thickness_mm)}mm** 적용. "
     "벽체 패널은 PCI 표준 따라 A-frame 트레일러에 **세워서** 운송."
 )
 
@@ -405,7 +405,7 @@ with st.expander("🎨 색깔·박스 의미 (범례)", expanded=False):
         )
     with leg_col2:
         st.markdown(
-            "**갈색 박스** → 더니지(목재 받침), PCI 100mm 표준\n\n"
+            "**갈색 박스** → 받침목(목재 받침), PCI 100mm 표준\n\n"
             "**노랑·연파랑 등 연한 톤** → Top View 자리 구분 (1단 안의 자리)"
         )
     with leg_col3:
@@ -489,15 +489,14 @@ st.divider()
 st.markdown("### 🔧 수동 배치 시뮬레이션")
 st.caption(
     "위 자동 결과와 별개로, 직접 **화물 + 트럭**을 골라 1회차 적재가 가능한지 시뮬레이션. "
-    "더니지 간격은 알고리즘이 자동 적용 (붙어 있게 안 놓음)."
+    "받침목 간격은 알고리즘이 자동 적용 (붙어 있게 안 놓음)."
 )
 
 with st.expander("🔧 수동 배치 입력", expanded=False):
     cargo_kind = st.radio(
-        "화물 종류 (한 회차에는 한 종류만)",
+        "화물 종류",
         options=["모듈", "플로어 패널", "벽체 패널"],
         horizontal=True,
-        help="한 트럭에 모듈+패널 섞기 또는 플로어+벽체 섞기는 실무상 안 함.",
     )
 
     # 화물 풀
@@ -543,7 +542,7 @@ with st.expander("🔧 수동 배치 입력", expanded=False):
                     f"✅ 적재 가능! "
                     f"{len(picked_items)}매 → {chosen_truck.name} | "
                     f"화물 {int(manual_trip.cargo_weight):,}kg "
-                    f"+ 더니지 {int(manual_trip.dunnage_weight):,}kg | "
+                    f"+ 받침목 {int(manual_trip.dunnage_weight):,}kg | "
                     f"적재율 **{manual_trip.utilization:.1f}%**"
                 )
 
