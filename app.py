@@ -16,7 +16,7 @@ from src.models import (
     DunnageSpec, Module, Panel, SpacingParams,
     load_road_classes, load_trucks,
 )
-from src.packer import apply_truck_overrides, pack_items
+from src.packer import apply_truck_overrides, pack_items, simulate_manual_trip
 from src.visualizer import draw_3d_view, draw_rear_view, draw_top_view
 
 
@@ -479,6 +479,106 @@ if trip_options:
             draw_3d_view(sel_trip, truck, spacing),
             width="stretch",
         )
+
+
+# ---------------------------------------------------------------------------
+# 수동 배치 시뮬레이션 — 사용자가 직접 화물·트럭 조합
+# ---------------------------------------------------------------------------
+
+st.divider()
+st.markdown("### 🔧 수동 배치 시뮬레이션")
+st.caption(
+    "위 자동 결과와 별개로, 직접 **화물 + 트럭**을 골라 1회차 적재가 가능한지 시뮬레이션. "
+    "더니지 간격은 알고리즘이 자동 적용 (붙어 있게 안 놓음)."
+)
+
+with st.expander("🔧 수동 배치 입력", expanded=False):
+    cargo_kind = st.radio(
+        "화물 종류 (한 회차에는 한 종류만)",
+        options=["모듈", "플로어 패널", "벽체 패널"],
+        horizontal=True,
+        help="한 트럭에 모듈+패널 섞기 또는 플로어+벽체 섞기는 실무상 안 함.",
+    )
+
+    # 화물 풀
+    if cargo_kind == "모듈":
+        pool = {m.name: m for m in modules}
+    elif cargo_kind == "플로어 패널":
+        pool = {p.name: p for p in panels if isinstance(p, Panel) and p.kind == "floor"}
+    else:
+        pool = {p.name: p for p in panels if isinstance(p, Panel) and p.kind == "wall"}
+
+    if not pool:
+        st.info(f"입력된 {cargo_kind}이 없습니다. 위 입력 폼에서 먼저 화물을 추가해 주세요.")
+    else:
+        picked_names = st.multiselect(
+            f"적재할 {cargo_kind} 선택",
+            options=list(pool.keys()),
+            default=list(pool.keys())[:1] if pool else [],
+        )
+
+        # 추천 트럭 안내
+        if cargo_kind == "벽체 패널":
+            recommend = "A-frame 트레일러"
+        else:
+            recommend = "저상 또는 확장형 광폭"
+        st.caption(f"💡 추천 트럭: **{recommend}**")
+
+        manual_truck_name = st.selectbox(
+            "사용할 트럭",
+            options=[t.name for t in trucks],
+            key="manual_truck_select",
+        )
+
+        if picked_names:
+            chosen_truck = next(t for t in trucks if t.name == manual_truck_name)
+            picked_items = [pool[name] for name in picked_names]
+
+            ok, reason, manual_trip = simulate_manual_trip(
+                picked_items, chosen_truck, road, spacing
+            )
+
+            if ok and manual_trip is not None:
+                st.success(
+                    f"✅ 적재 가능! "
+                    f"{len(picked_items)}매 → {chosen_truck.name} | "
+                    f"화물 {int(manual_trip.cargo_weight):,}kg "
+                    f"+ 더니지 {int(manual_trip.dunnage_weight):,}kg | "
+                    f"적재율 **{manual_trip.utilization:.1f}%**"
+                )
+
+                # 시각화 — 자동 결과와 동일한 탭 구조
+                m_tab_2d, m_tab_3d = st.tabs(
+                    ["📐 2D 도식", "🎲 3D 미리보기"]
+                )
+                with m_tab_2d:
+                    mc1, mc2 = st.columns(2)
+                    with mc1:
+                        st.markdown("**Top View**")
+                        st.plotly_chart(
+                            draw_top_view(manual_trip, chosen_truck, spacing),
+                            width="stretch",
+                            key="manual_top",
+                        )
+                    with mc2:
+                        st.markdown("**Rear View**")
+                        st.plotly_chart(
+                            draw_rear_view(manual_trip, chosen_truck, spacing),
+                            width="stretch",
+                            key="manual_rear",
+                        )
+                with m_tab_3d:
+                    st.plotly_chart(
+                        draw_3d_view(manual_trip, chosen_truck, spacing),
+                        width="stretch",
+                        key="manual_3d",
+                    )
+            else:
+                st.error(f"❌ 적재 불가: {reason}")
+                st.caption(
+                    "트럭 종류·도로 등급·화물 개수를 조정해 보세요. "
+                    "벽체 패널은 A-frame, 모듈/플로어는 저상/광폭 트레일러만 가능합니다."
+                )
 
 
 # Footer

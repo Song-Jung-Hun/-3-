@@ -534,6 +534,34 @@ def recheck_trip_with_truck(
     return True, "OK", new_trip
 
 
+def simulate_manual_trip(
+    items: list[Item],
+    truck: Truck,
+    road: RoadClass,
+    spacing: SpacingParams = SpacingParams(),
+    dunnage: DunnageSpec = DunnageSpec(),
+) -> tuple[bool, str, Trip | None]:
+    """사용자가 직접 선택한 화물 + 트럭으로 1회차 시뮬레이션.
+
+    더니지 간격은 자동 적용됨.
+    """
+    if not items:
+        return False, "화물이 비어있음", None
+
+    # 모든 아이템이 같은 종류인지 검사
+    first = items[0]
+    if isinstance(first, Module):
+        if not all(isinstance(i, Module) for i in items):
+            return False, "한 회차에 모듈과 패널을 섞을 수 없음", None
+    else:
+        if not all(isinstance(i, Panel) and i.kind == first.kind for i in items):
+            return False, "한 회차에 다른 종류 패널을 섞을 수 없음 (플로어/벽체)", None
+
+    # 임시 trip 만들어서 recheck
+    fake_trip = Trip(trip_no=999, truck=truck, items=list(items))
+    return recheck_trip_with_truck(fake_trip, truck, road, spacing, dunnage)
+
+
 def apply_truck_overrides(
     result: PackResult,
     overrides: dict,  # {trip_no: truck_name}
