@@ -1,0 +1,29 @@
+[
+  {
+    "name": "저상 트레일러 (3.0m폭, 24t)",
+    "truck_type": "lowbed",
+    "max_length": 12000,
+    "max_width": 3000,
+    "max_height": 4500,
+    "max_weight": 24000,
+    "vehicle_height_offset": 700
+  },
+  {
+    "name": "확장형 광폭 트레일러 (3.4m폭, 30t)",
+    "truck_type": "extendable",
+    "max_length": 22000,
+    "max_width": 3400,
+    "max_height": 4500,
+    "max_weight": 30000,
+    "vehicle_height_offset": 700
+  },
+  {
+    "name": "A-frame 트레일러 (벽체 전용, 24t)",
+    "truck_type": "aframe",
+    "max_length": 12000,
+    "max_width": 3000,
+    "max_height": 4500,
+    "max_weight": 24000,
+    "vehicle_height_offset": 700
+  }
+]

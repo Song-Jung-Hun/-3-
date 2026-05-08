@@ -1,0 +1,454 @@
+"""모듈러 운송 시뮬레이터 — Streamlit 단일 페이지.
+
+사용자가 모듈/플로어 패널/벽체 패널 종류 수를 먼저 선택하고,
+종류별 사양·개수를 입력 → 운송 회차 산출 + 적재 도식 시각화.
+
+실행:
+    streamlit run app.py
+"""
+from __future__ import annotations
+
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from src.models import (
+    DunnageSpec, Module, Panel, SpacingParams,
+    load_road_classes, load_trucks,
+)
+from src.packer import apply_truck_overrides, pack_items
+from src.visualizer import draw_rear_view, draw_top_view
+
+
+# ---------------------------------------------------------------------------
+# 페이지 설정 & 카탈로그 로딩
+# ---------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="모듈러 운송 시뮬레이터",
+    page_icon="🚚",
+    layout="wide",
+)
+
+
+@st.cache_data
+def _load_catalogs():
+    return load_trucks(), load_road_classes()
+
+
+trucks, roads = _load_catalogs()
+
+
+# ---------------------------------------------------------------------------
+# 사이드바 — 도로 + 종류 수 + 적재 간격 + 트럭 카탈로그
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.title("⚙️ 시뮬레이션 설정")
+
+    road_name = st.selectbox(
+        "도로 등급",
+        options=[r.name for r in roads],
+        index=0,
+        help="LH 매뉴얼 §2.7.1 표 기반.",
+    )
+    road = next(r for r in roads if r.name == road_name)
+
+    st.caption(
+        f"**{road.name}** 한도: 길이 {road.max_length:.0f}mm / 폭 {road.max_width:.0f}mm "
+        f"/ 높이 {road.max_height:.0f}mm / 중량 {road.max_weight:.0f}kg"
+    )
+
+    st.divider()
+    st.subheader("📋 종류 수 선택")
+    n_module_kinds = st.number_input(
+        "모듈 종류 수", min_value=0, max_value=10, value=1, step=1,
+        help="예: 침실·거실·주방을 따로 입력하려면 3 선택",
+    )
+    n_floor_kinds = st.number_input(
+        "플로어 패널 종류 수", min_value=0, max_value=10, value=1, step=1,
+    )
+    n_wall_kinds = st.number_input(
+        "벽체 패널 종류 수", min_value=0, max_value=10, value=1, step=1,
+    )
+
+    st.divider()
+    st.subheader("📏 패널 적재 간격")
+    panel_gap = st.slider(
+        "패널 사이 더니지 (mm)", 50, 200, 100, 10,
+        help="목재 받침 두께. 결박벨트·지게차 포크 진입 공간. PCI MNL-122 권장 75~100mm.",
+    )
+    edge_clearance = st.slider(
+        "트럭 양끝 여유 (mm)", 0, 500, 200, 50,
+        help="결박 작업 공간. KOSHA 화물 결박 가이드 기준 150~200mm 권장.",
+    )
+    dunnage_gap = st.slider(
+        "적층 단 사이 더니지 (mm)", 50, 200, 100, 10,
+        help="패널을 위로 쌓을 때 단 사이 받침 두께.",
+    )
+    spacing = SpacingParams(
+        panel_gap_mm=float(panel_gap),
+        truck_edge_clearance_mm=float(edge_clearance),
+        dunnage_thickness_mm=float(dunnage_gap),
+    )
+
+    st.divider()
+    with st.expander("🚛 모듈러 운송 차량 카탈로그 (3종)"):
+        df_trucks = pd.DataFrame(
+            [
+                {
+                    "차량": t.name,
+                    "차종": t.truck_type,
+                    "길이(mm)": t.max_length,
+                    "폭(mm)": t.max_width,
+                    "높이(mm)": t.max_height,
+                    "적재(kg)": t.max_weight,
+                }
+                for t in trucks
+            ]
+        )
+        st.dataframe(df_trucks, hide_index=True, width="stretch")
+        st.caption(
+            "**lowbed** = 저상 트레일러 (모듈·플로어 패널) / "
+            "**extendable** = 확장형 광폭 트레일러 (광폭 모듈) / "
+            "**aframe** = A-frame 트레일러 (벽체 패널 세워서). "
+            "출처: LH §2.7.1, 한국특장차, PCI MNL-122. "
+            "`references/` 폴더 자료 + `data/trucks.json` 직접 수정 가능."
+        )
+
+
+# ---------------------------------------------------------------------------
+# 입력 폼 헬퍼
+# ---------------------------------------------------------------------------
+
+MODULE_DEFAULTS = [
+    ("침실 모듈", 3000, 6000, 3000, 7000, 8),
+    ("거실 광폭모듈", 3400, 9000, 3000, 9500, 4),
+    ("주방 모듈", 3000, 6000, 3000, 7500, 4),
+    ("욕실 수직모듈", 2400, 3000, 3000, 4500, 2),
+    ("기타 모듈", 3000, 6000, 3000, 7000, 0),
+]
+
+FLOOR_DEFAULTS = [
+    ("거실 플로어", 3000, 9000, 200, 1500, 4),
+    ("주방 플로어", 3000, 6000, 200, 1100, 0),
+    ("기타 플로어", 3000, 9000, 200, 1500, 0),
+]
+
+WALL_DEFAULTS = [
+    ("세대간벽", 3000, 9000, 150, 1100, 4),
+    ("외피벽체", 3000, 9000, 200, 1500, 0),
+    ("기타 벽체", 3000, 6000, 150, 800, 0),
+]
+
+
+def _module_form(idx: int) -> list[Module]:
+    d = MODULE_DEFAULTS[idx] if idx < len(MODULE_DEFAULTS) else MODULE_DEFAULTS[-1]
+    name = st.text_input("이름", value=d[0], key=f"mname_{idx}")
+    c1, c2 = st.columns(2)
+    with c1:
+        width = st.number_input("폭 (mm)", 1000, 5000, d[1], 100, key=f"mw_{idx}")
+        length = st.number_input("길이 (mm)", 2000, 20000, d[2], 100, key=f"ml_{idx}")
+        height = st.number_input("높이 (mm)", 1500, 5000, d[3], 100, key=f"mh_{idx}")
+    with c2:
+        weight = st.number_input("중량 (kg)", 500, 40000, d[4], 100, key=f"mwt_{idx}")
+        count = st.number_input("운송 수량 (EA)", 0, 500, d[5], 1, key=f"mc_{idx}")
+
+    return [
+        Module(
+            name=f"{name}-{j + 1}",
+            width=float(width),
+            length=float(length),
+            height=float(height),
+            weight=float(weight),
+        )
+        for j in range(int(count))
+    ]
+
+
+def _panel_form(idx: int, kind: str, defaults: list, key_prefix: str) -> list[Panel]:
+    d = defaults[idx] if idx < len(defaults) else defaults[-1]
+    name = st.text_input("이름", value=d[0], key=f"{key_prefix}name_{idx}")
+    c1, c2 = st.columns(2)
+    with c1:
+        width = st.number_input("폭 (mm)", 500, 5000, d[1], 100, key=f"{key_prefix}w_{idx}")
+        length = st.number_input("길이 (mm)", 1000, 20000, d[2], 100, key=f"{key_prefix}l_{idx}")
+        thickness = st.number_input("두께 (mm)", 50, 1000, d[3], 10, key=f"{key_prefix}t_{idx}")
+    with c2:
+        weight = st.number_input("중량 (kg, 1매)", 100, 20000, d[4], 100, key=f"{key_prefix}wt_{idx}")
+        count = st.number_input("운송 수량 (EA)", 0, 500, d[5], 1, key=f"{key_prefix}c_{idx}")
+
+    return [
+        Panel(
+            name=f"{name}-{j + 1}",
+            kind=kind,
+            width=float(width),
+            length=float(length),
+            thickness=float(thickness),
+            weight=float(weight),
+        )
+        for j in range(int(count))
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 메인 — 입력 폼
+# ---------------------------------------------------------------------------
+
+st.title("🚚 모듈러 운송 시뮬레이터")
+st.markdown(
+    "사이드바에서 **종류 수**와 **적재 간격**을 정한 뒤, "
+    "아래에 종류별 사양·수량을 입력하세요. 단위는 **mm·kg**."
+)
+
+modules: list[Module] = []
+panels: list[Panel] = []
+
+if n_module_kinds > 0:
+    st.subheader(f"📦 모듈 ({n_module_kinds}종)")
+    cols = st.columns(min(int(n_module_kinds), 3))
+    for i in range(int(n_module_kinds)):
+        with cols[i % 3]:
+            with st.expander(f"모듈 종류 {i + 1}", expanded=True):
+                modules.extend(_module_form(i))
+
+if n_floor_kinds > 0:
+    st.subheader(f"⬜ 플로어 패널 ({n_floor_kinds}종)")
+    cols = st.columns(min(int(n_floor_kinds), 3))
+    for i in range(int(n_floor_kinds)):
+        with cols[i % 3]:
+            with st.expander(f"플로어 종류 {i + 1}", expanded=True):
+                panels.extend(_panel_form(i, "floor", FLOOR_DEFAULTS, "f"))
+
+if n_wall_kinds > 0:
+    st.subheader(f"🟧 벽체 패널 ({n_wall_kinds}종)")
+    cols = st.columns(min(int(n_wall_kinds), 3))
+    for i in range(int(n_wall_kinds)):
+        with cols[i % 3]:
+            with st.expander(f"벽체 종류 {i + 1}", expanded=True):
+                panels.extend(_panel_form(i, "wall", WALL_DEFAULTS, "w"))
+
+
+# ---------------------------------------------------------------------------
+# 결과
+# ---------------------------------------------------------------------------
+
+st.divider()
+
+if not modules and not panels:
+    st.warning("운송할 아이템이 없습니다. 사이드바에서 종류 수를 늘리거나 수량을 입력해 주세요.")
+    st.stop()
+
+raw_result = pack_items(modules, panels, trucks, road, spacing)
+
+# ---------------------------------------------------------------------------
+# 회차별 트럭 변경 UI — 사용자가 자동 결과를 직접 수정 가능
+# ---------------------------------------------------------------------------
+
+if "truck_overrides" not in st.session_state:
+    st.session_state.truck_overrides = {}
+
+# 현재 결과의 trip_no 들로 stale entry 정리
+valid_trip_nos = {t.trip_no for t in raw_result.trips}
+st.session_state.truck_overrides = {
+    k: v for k, v in st.session_state.truck_overrides.items() if k in valid_trip_nos
+}
+
+with st.expander("🔄 회차별 트럭 변경 (선택 사항)", expanded=False):
+    st.caption(
+        "기본은 알고리즘이 자동 선택한 트럭이 사용됩니다. "
+        "원하는 회차의 트럭을 직접 다른 종류로 바꾸면 그 트럭으로 적재 가능한지 자동 검사됩니다. "
+        "❌이 뜨면 그 트럭에는 못 실어요 — 원래 트럭이 그대로 유지됩니다."
+    )
+    truck_names = ["(자동)"] + [t.name for t in trucks]
+    for trip in raw_result.trips:
+        c1, c2, c3 = st.columns([1.5, 2.5, 3])
+        c1.markdown(f"**회차 {trip.trip_no}**")
+        c2.caption(f"자동 선택: {trip.truck.name}")
+        cur_choice = st.session_state.truck_overrides.get(trip.trip_no, "(자동)")
+        try:
+            cur_idx = truck_names.index(cur_choice)
+        except ValueError:
+            cur_idx = 0
+        new_choice = c3.selectbox(
+            "사용할 트럭",
+            options=truck_names,
+            index=cur_idx,
+            key=f"override_select_{trip.trip_no}",
+            label_visibility="collapsed",
+        )
+        if new_choice == "(자동)":
+            st.session_state.truck_overrides.pop(trip.trip_no, None)
+        else:
+            st.session_state.truck_overrides[trip.trip_no] = new_choice
+
+# 사용자 override 적용
+result, override_errors = apply_truck_overrides(
+    raw_result, st.session_state.truck_overrides, trucks, road, spacing
+)
+
+if override_errors:
+    st.warning(
+        "⚠ 일부 회차의 트럭 변경이 적용되지 않았습니다 (적재 불가). 원래 트럭이 유지됩니다.\n\n"
+        + "\n".join(f"- 회차 {no}: {reason}" for no, reason in override_errors.items())
+    )
+
+st.subheader("📊 운송 결과")
+
+mc_card, fc_card, total_card, util_card = st.columns(4)
+mc_card.metric("모듈 회차", f"{result.module_trips} 회")
+fc_card.metric("패널 회차", f"{result.panel_trips} 회")
+total_card.metric("**총 회차**", f"{result.total_trips} 회")
+util_card.metric("평균 적재율", f"{result.avg_utilization:.1f}%")
+
+if result.blocked:
+    st.error(f"⚠ 운송 불가 아이템 {len(result.blocked)}개 — 도로 등급 올리거나 모듈 분할 필요")
+    with st.expander("불가 사유 보기"):
+        for item, reason in result.blocked:
+            st.write(f"- **{item.name}**: {reason}")
+
+
+# 회차 표
+st.markdown("### 🚛 트럭 운송 회차별 적재 내역")
+st.caption(
+    "회차 = 트럭 1대가 공장→현장으로 1번 운반하는 것. "
+    "더니지 무게는 적층 단 사이 받침 목재(소나무 500kg/m³, 100×100mm) 합산."
+)
+trip_rows = []
+for trip in result.trips:
+    item_names = ", ".join(i.name for i in trip.items)
+    extra = ""
+    if trip.kind == "panel":
+        sample = trip.items[0] if trip.items else None
+        if sample and sample.kind == "wall":
+            extra = f"세움 {trip.panels_per_row}매 (폭방향)"
+        else:
+            extra = f"{trip.panels_per_row}열 × {trip.n_layers}단"
+    elif trip.kind == "module":
+        extra = f"{len(trip.items)}매/대 (1열)"
+    trip_rows.append(
+        {
+            "회차": trip.trip_no,
+            "차량": trip.truck.name,
+            "종류": "모듈" if trip.kind == "module" else "패널",
+            "수량": len(trip.items),
+            "적재배치": extra,
+            "아이템": item_names,
+            "화물중량(kg)": int(trip.cargo_weight),
+            "더니지(kg)": int(trip.dunnage_weight),
+            "총중량(kg)": int(trip.total_weight),
+            "적재율(%)": round(trip.utilization, 1),
+            "광폭검토": "✓" if trip.wide_check else "",
+        }
+    )
+st.dataframe(pd.DataFrame(trip_rows), width="stretch", hide_index=True)
+
+
+# 적재율 막대그래프
+if result.trips:
+    df_util = pd.DataFrame(
+        [
+            {
+                "회차": t.trip_no,
+                "적재율(%)": round(t.utilization, 1),
+                "종류": "모듈" if t.kind == "module" else "패널",
+            }
+            for t in result.trips
+        ]
+    )
+    fig_util = px.bar(
+        df_util,
+        x="회차",
+        y="적재율(%)",
+        color="종류",
+        title="회차별 적재율 (화물 + 더니지 / 트럭 한도)",
+        text="적재율(%)",
+    )
+    fig_util.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig_util.update_layout(yaxis_range=[0, 110])
+    st.plotly_chart(fig_util, width="stretch")
+
+
+# ---------------------------------------------------------------------------
+# 적재 시각화 — Top View + Rear View
+# ---------------------------------------------------------------------------
+
+st.markdown("### 🎨 트럭 적재 시각화")
+st.caption(
+    f"패널 사이 더니지 **{int(spacing.panel_gap_mm)}mm**, "
+    f"양끝 여유 **{int(spacing.truck_edge_clearance_mm)}mm**, "
+    f"적층 더니지 **{int(spacing.dunnage_thickness_mm)}mm** 적용. "
+    "벽체 패널은 PCI 표준 따라 A-frame 트레일러에 **세워서** 운송."
+)
+
+with st.expander("🎨 색깔·박스 의미 (범례)", expanded=False):
+    leg_col1, leg_col2, leg_col3 = st.columns(3)
+    with leg_col1:
+        st.markdown(
+            "**검은 굵은 선** → 트럭 적재함 외곽\n\n"
+            "**주황 점선 박스** → 양끝 결박 공간 (벨트·후크 위치)"
+        )
+    with leg_col2:
+        st.markdown(
+            "**갈색 박스** → 더니지(목재 받침), PCI 100mm 표준\n\n"
+            "**노랑·연파랑 등 연한 톤** → Top View 자리 구분 (1단 안의 자리)"
+        )
+    with leg_col3:
+        st.markdown(
+            "**짙은 톤 (네이비·빨강)** → Rear View 적층 단 구분\n\n"
+            "**파란색 큰 박스** → 모듈 1매"
+        )
+
+trip_options = [
+    f"회차 {t.trip_no} ({t.truck.name}, {int(t.total_weight)}kg)"
+    for t in result.trips
+]
+
+if trip_options:
+    sel_idx = st.selectbox(
+        "회차 선택",
+        options=range(len(trip_options)),
+        format_func=lambda i: trip_options[i],
+    )
+    sel_trip = result.trips[sel_idx]
+    truck = sel_trip.truck
+
+    # 회차 종류 안내
+    if sel_trip.kind == "module":
+        st.info(
+            "🚛 **모듈 회차** — 저상/광폭 트레일러에 모듈 N개 1열 적재. "
+            "Top View는 길이방향 배치, Rear View는 폭방향 1매 + 모듈 높이."
+        )
+    elif sel_trip.items and sel_trip.items[0].kind == "wall":
+        st.info(
+            "🟧 **벽체 패널 회차 (A-frame 트레일러)** — 패널을 **세워서 폭 방향에 두께 N매 줄짓기**. "
+            "PCI MNL-122 표준. Top View와 Rear View 모두 세운 자세로 표시."
+        )
+    else:
+        st.info(
+            "⬜ **플로어 패널 회차** — 패널을 눕혀서 적층. "
+            "Top View = 1단의 평면(자리1·자리2), Rear View = 위로 N단 적층된 단면."
+        )
+
+    view_col1, view_col2 = st.columns(2)
+    with view_col1:
+        st.markdown("**📐 Top View (평면도)**")
+        st.plotly_chart(
+            draw_top_view(sel_trip, truck, spacing),
+            width="stretch",
+        )
+    with view_col2:
+        st.markdown("**📐 Rear View (뒷면도)**")
+        st.plotly_chart(
+            draw_rear_view(sel_trip, truck, spacing),
+            width="stretch",
+        )
+
+
+# Footer
+st.divider()
+st.caption(
+    f"입력 카탈로그: 차량 {len(trucks)}종, 도로 {len(roads)}등급. "
+    "기본 데이터 `data/*.json` — 메모장으로 수정 가능. "
+    "참고 자료: `references/` 폴더 (LH §2.7.1 / PCI MNL-122 / KOSHA / 한국특장차)."
+)

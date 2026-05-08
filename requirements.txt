@@ -1,0 +1,7 @@
+pandas
+numpy
+matplotlib
+plotly
+streamlit
+binpacking
+pytest
