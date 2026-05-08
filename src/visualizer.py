@@ -17,6 +17,10 @@ from .packer import Trip
 SEAT_PALETTE = ["#f4d35e", "#a8dadc", "#bde0fe", "#cdb4db", "#ffafcc", "#fdc4b6"]
 LAYER_PALETTE = ["#1d3557", "#e63946", "#2a9d8f", "#9d0208", "#003049", "#7209b7"]
 MODULE_COLOR = "#1f77b4"
+PALETTE_3D = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +34,46 @@ def _truck_outline_top(fig: go.Figure, truck: Truck) -> None:
         x1=truck.max_length, y1=truck.max_width,
         line=dict(color="black", width=3),
         fillcolor="rgba(220,220,220,0.3)",
+    )
+    # 길이 치수 화살표 (적재함 아래)
+    arrow_y = -200
+    fig.add_annotation(
+        x=truck.max_length, y=arrow_y, ax=0, ay=arrow_y,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#0066cc",
+    )
+    fig.add_annotation(
+        x=0, y=arrow_y, ax=truck.max_length, ay=arrow_y,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#0066cc",
+    )
+    fig.add_annotation(
+        x=truck.max_length / 2, y=arrow_y - 100,
+        text=f"<b>길이 L = {int(truck.max_length):,} mm</b>",
+        showarrow=False,
+        font=dict(size=11, color="#0066cc"),
+    )
+    # 폭 치수 화살표 (적재함 오른쪽)
+    arrow_x = truck.max_length + 250
+    fig.add_annotation(
+        x=arrow_x, y=truck.max_width, ax=arrow_x, ay=0,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#cc6600",
+    )
+    fig.add_annotation(
+        x=arrow_x, y=0, ax=arrow_x, ay=truck.max_width,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#cc6600",
+    )
+    fig.add_annotation(
+        x=arrow_x + 200, y=truck.max_width / 2,
+        text=f"<b>폭 W</b><br>{int(truck.max_width):,}<br>mm",
+        showarrow=False,
+        font=dict(size=10, color="#cc6600"),
     )
 
 
@@ -45,7 +89,7 @@ def _truck_outline_rear(fig: go.Figure, truck: Truck) -> None:
     )
     fig.add_annotation(
         x=truck.max_width / 2, y=veh_h / 2,
-        text=f"<b>{truck.name}</b> 차체",
+        text=f"<b>{truck.name}</b> 차체 ({int(veh_h)}mm)",
         showarrow=False, font=dict(size=10, color="white"),
     )
     # 적재함 한도
@@ -56,10 +100,43 @@ def _truck_outline_rear(fig: go.Figure, truck: Truck) -> None:
         line=dict(color="black", width=2, dash="dot"),
         fillcolor="rgba(220,220,220,0.2)",
     )
+    # 폭 치수 화살표 (아래)
+    arrow_y = -250
     fig.add_annotation(
-        x=truck.max_width + 100, y=truck.max_height,
-        text=f"높이한도<br>{int(truck.max_height)}mm",
-        showarrow=False, font=dict(size=9), xanchor="left",
+        x=truck.max_width, y=arrow_y, ax=0, ay=arrow_y,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#cc6600",
+    )
+    fig.add_annotation(
+        x=0, y=arrow_y, ax=truck.max_width, ay=arrow_y,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#cc6600",
+    )
+    fig.add_annotation(
+        x=truck.max_width / 2, y=arrow_y - 200,
+        text=f"<b>폭 W = {int(truck.max_width):,} mm</b>",
+        showarrow=False, font=dict(size=11, color="#cc6600"),
+    )
+    # 높이 치수 화살표 (오른쪽)
+    arrow_x = truck.max_width + 400
+    fig.add_annotation(
+        x=arrow_x, y=truck.max_height, ax=arrow_x, ay=0,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#009933",
+    )
+    fig.add_annotation(
+        x=arrow_x, y=0, ax=arrow_x, ay=truck.max_height,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowsize=1.5, arrowwidth=2,
+        arrowcolor="#009933",
+    )
+    fig.add_annotation(
+        x=arrow_x + 350, y=truck.max_height / 2,
+        text=f"<b>높이 H</b><br>{int(truck.max_height):,}<br>mm<br>(한도)",
+        showarrow=False, font=dict(size=10, color="#009933"),
     )
 
 
@@ -185,13 +262,13 @@ def draw_top_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             )
 
     fig.update_layout(
-        xaxis=dict(title="길이 (mm)", range=[-300, truck.max_length + 300]),
+        xaxis=dict(title="길이 (mm)", range=[-500, truck.max_length + 1200]),
         yaxis=dict(
             title="폭 (mm)",
-            range=[-300, truck.max_width + 600],
+            range=[-700, truck.max_width + 700],
             scaleanchor="x", scaleratio=1,
         ),
-        height=400, showlegend=False,
+        height=450, showlegend=False,
         margin=dict(l=20, r=20, t=20, b=20),
     )
     return fig
@@ -315,13 +392,210 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
         )
 
     fig.update_layout(
-        xaxis=dict(title="폭 (mm)", range=[-200, truck.max_width + 900]),
+        xaxis=dict(title="폭 (mm)", range=[-300, truck.max_width + 1200]),
         yaxis=dict(
             title="높이 (mm)",
-            range=[-100, truck.max_height + 400],
+            range=[-700, truck.max_height + 500],
             scaleanchor="x", scaleratio=1,
         ),
-        height=500, showlegend=False,
+        height=550, showlegend=False,
         margin=dict(l=20, r=20, t=20, b=20),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 3D View — Mesh3d로 입체 적재 도식
+# ---------------------------------------------------------------------------
+
+def _box_mesh(
+    x0: float, y0: float, z0: float,
+    x1: float, y1: float, z1: float,
+    color: str, opacity: float, name: str = "",
+    show_edges: bool = True,
+) -> list[go.Mesh3d | go.Scatter3d]:
+    """8 꼭짓점 직육면체 + 외곽선. (Mesh, edges) 리스트 반환."""
+    mesh = go.Mesh3d(
+        x=[x0, x1, x1, x0, x0, x1, x1, x0],
+        y=[y0, y0, y1, y1, y0, y0, y1, y1],
+        z=[z0, z0, z0, z0, z1, z1, z1, z1],
+        i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
+        j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
+        k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
+        color=color,
+        opacity=opacity,
+        flatshading=True,
+        showlegend=False,
+        hovertext=name,
+        hoverinfo="text" if name else "skip",
+    )
+    traces: list = [mesh]
+    if show_edges:
+        # 12 모서리
+        ex, ey, ez = [], [], []
+        edges = [
+            ((x0, y0, z0), (x1, y0, z0)),
+            ((x1, y0, z0), (x1, y1, z0)),
+            ((x1, y1, z0), (x0, y1, z0)),
+            ((x0, y1, z0), (x0, y0, z0)),
+            ((x0, y0, z1), (x1, y0, z1)),
+            ((x1, y0, z1), (x1, y1, z1)),
+            ((x1, y1, z1), (x0, y1, z1)),
+            ((x0, y1, z1), (x0, y0, z1)),
+            ((x0, y0, z0), (x0, y0, z1)),
+            ((x1, y0, z0), (x1, y0, z1)),
+            ((x1, y1, z0), (x1, y1, z1)),
+            ((x0, y1, z0), (x0, y1, z1)),
+        ]
+        for (p0, p1) in edges:
+            ex += [p0[0], p1[0], None]
+            ey += [p0[1], p1[1], None]
+            ez += [p0[2], p1[2], None]
+        traces.append(go.Scatter3d(
+            x=ex, y=ey, z=ez,
+            mode="lines",
+            line=dict(color="rgba(0,0,0,0.6)", width=2),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+    return traces
+
+
+def _truck_outline_3d(fig: go.Figure, truck: Truck) -> None:
+    """트럭 차체(채움) + 적재함 외곽(점선) 3D."""
+    veh_h = truck.vehicle_height_offset
+    # 차체
+    for tr in _box_mesh(
+        0, 0, 0,
+        truck.max_length, truck.max_width, veh_h,
+        "#666", 0.5, f"{truck.name} 차체",
+    ):
+        fig.add_trace(tr)
+    # 적재함 한도 (점선 외곽만)
+    ex, ey, ez = [], [], []
+    z0, z1 = veh_h, truck.max_height
+    L, W = truck.max_length, truck.max_width
+    # 위 사각 + 수직 모서리만 (아래는 차체 윗면과 겹침)
+    edges = [
+        ((0, 0, z1), (L, 0, z1)),
+        ((L, 0, z1), (L, W, z1)),
+        ((L, W, z1), (0, W, z1)),
+        ((0, W, z1), (0, 0, z1)),
+        ((0, 0, z0), (0, 0, z1)),
+        ((L, 0, z0), (L, 0, z1)),
+        ((L, W, z0), (L, W, z1)),
+        ((0, W, z0), (0, W, z1)),
+    ]
+    for p0, p1 in edges:
+        ex += [p0[0], p1[0], None]
+        ey += [p0[1], p1[1], None]
+        ez += [p0[2], p1[2], None]
+    fig.add_trace(go.Scatter3d(
+        x=ex, y=ey, z=ez,
+        mode="lines",
+        line=dict(color="black", dash="dash", width=3),
+        showlegend=False,
+        hoverinfo="skip",
+        name="적재 한도",
+    ))
+
+
+def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
+    """3D 미리보기 — 트럭 + 화물 입체 도식."""
+    fig = go.Figure()
+    _truck_outline_3d(fig, truck)
+    veh_h = truck.vehicle_height_offset
+    edge = sp.truck_edge_clearance_mm
+    gap = sp.panel_gap_mm
+    dun = sp.dunnage_thickness_mm
+
+    if not trip.items:
+        pass  # 트럭만
+
+    elif trip.kind == "module":
+        # 모듈 N매 길이 방향 1열, 폭 가운데
+        cursor = edge
+        for k, item in enumerate(trip.items):
+            cy = (truck.max_width - item.width) / 2
+            color = PALETTE_3D[k % len(PALETTE_3D)]
+            for tr in _box_mesh(
+                cursor, cy, veh_h,
+                cursor + item.length, cy + item.width, veh_h + item.height,
+                color, 0.65,
+                f"{item.name} ({int(item.weight)}kg)",
+            ):
+                fig.add_trace(tr)
+            cursor += item.length + gap
+
+    elif isinstance(trip.items[0], Panel) and trip.items[0].kind == "wall":
+        # 벽체 패널 — 폭 방향에 두께 N매 세움 (높이 = 패널 폭)
+        sample = trip.items[0]
+        n = len(trip.items)
+        length_x0 = (truck.max_length - sample.length) / 2
+        cursor_y = edge
+        for k in range(n):
+            color = PALETTE_3D[k % len(PALETTE_3D)]
+            item = trip.items[k]
+            for tr in _box_mesh(
+                length_x0, cursor_y, veh_h,
+                length_x0 + sample.length,
+                cursor_y + sample.thickness,
+                veh_h + sample.width,
+                color, 0.7,
+                f"{item.name} ({int(item.weight)}kg, 세움)",
+            ):
+                fig.add_trace(tr)
+            cursor_y += sample.thickness + gap
+
+    else:
+        # 플로어 패널 — 1단 ppr매 × n_layers 단 적층
+        sample = trip.items[0]
+        ppr = trip.panels_per_row
+        n_total = len(trip.items)
+        used_layers = (n_total + ppr - 1) // ppr if ppr > 0 else 1
+        cy = (truck.max_width - sample.width) / 2
+        cursor_z = veh_h
+        for layer in range(used_layers):
+            in_layer = min(ppr, n_total - layer * ppr)
+            cursor_x = edge
+            color = PALETTE_3D[layer % len(PALETTE_3D)]
+            for k in range(in_layer):
+                idx = layer * ppr + k
+                item = trip.items[idx]
+                for tr in _box_mesh(
+                    cursor_x, cy, cursor_z,
+                    cursor_x + sample.length,
+                    cy + sample.width,
+                    cursor_z + sample.thickness,
+                    color, 0.7,
+                    f"{item.name} ({layer+1}단 자리{k+1})",
+                ):
+                    fig.add_trace(tr)
+                cursor_x += sample.length + gap
+            # 다음 단과의 더니지 (얇은 갈색 박스)
+            if layer < used_layers - 1:
+                for tr in _box_mesh(
+                    edge, cy, cursor_z + sample.thickness,
+                    truck.max_length - edge,
+                    cy + sample.width,
+                    cursor_z + sample.thickness + dun,
+                    "#8b4513", 0.85,
+                    f"더니지 {int(dun)}mm",
+                    show_edges=False,
+                ):
+                    fig.add_trace(tr)
+            cursor_z += sample.thickness + dun
+
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="길이 (mm)",
+            yaxis_title="폭 (mm)",
+            zaxis_title="높이 (mm)",
+            aspectmode="data",
+            camera=dict(eye=dict(x=1.6, y=1.4, z=0.9)),
+        ),
+        height=600,
+        margin=dict(l=0, r=0, t=0, b=0),
+        showlegend=False,
     )
     return fig

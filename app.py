@@ -17,7 +17,7 @@ from src.models import (
     load_road_classes, load_trucks,
 )
 from src.packer import apply_truck_overrides, pack_items
-from src.visualizer import draw_rear_view, draw_top_view
+from src.visualizer import draw_3d_view, draw_rear_view, draw_top_view
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +71,15 @@ with st.sidebar:
     n_wall_kinds = st.number_input(
         "벽체 패널 종류 수", min_value=0, max_value=10, value=1, step=1,
     )
+
+    st.divider()
+    st.subheader("🛣 운송 거리")
+    distance_km = st.number_input(
+        "공장 → 현장 거리 (편도 km)",
+        min_value=0.0, max_value=2000.0, value=50.0, step=5.0,
+        help="향후 경제성 분석 시 거리 × 트럭 단가 = 운송비 산출에 사용.",
+    )
+    st.caption(f"왕복 거리 = **{distance_km * 2:.0f} km** (편도 × 2)")
 
     st.divider()
     st.subheader("📏 패널 적재 간격")
@@ -295,11 +304,17 @@ if override_errors:
 
 st.subheader("📊 운송 결과")
 
-mc_card, fc_card, total_card, util_card = st.columns(4)
+mc_card, fc_card, total_card, util_card, dist_card = st.columns(5)
 mc_card.metric("모듈 회차", f"{result.module_trips} 회")
 fc_card.metric("패널 회차", f"{result.panel_trips} 회")
 total_card.metric("**총 회차**", f"{result.total_trips} 회")
 util_card.metric("평균 적재율", f"{result.avg_utilization:.1f}%")
+total_distance = result.total_trips * distance_km * 2
+dist_card.metric(
+    "총 운송거리",
+    f"{total_distance:,.0f} km",
+    help=f"왕복 {distance_km*2:.0f}km × {result.total_trips}회차",
+)
 
 if result.blocked:
     st.error(f"⚠ 운송 불가 아이템 {len(result.blocked)}개 — 도로 등급 올리거나 모듈 분할 필요")
@@ -413,6 +428,14 @@ if trip_options:
     sel_trip = result.trips[sel_idx]
     truck = sel_trip.truck
 
+    # 트럭 사양 정보 박스
+    spec_col1, spec_col2, spec_col3, spec_col4, spec_col5 = st.columns(5)
+    spec_col1.metric("현재 트럭", truck.name.split(" (")[0])
+    spec_col2.metric("길이 L", f"{int(truck.max_length):,} mm")
+    spec_col3.metric("폭 W", f"{int(truck.max_width):,} mm")
+    spec_col4.metric("높이 H", f"{int(truck.max_height):,} mm")
+    spec_col5.metric("적재 한도", f"{int(truck.max_weight):,} kg")
+
     # 회차 종류 안내
     if sel_trip.kind == "module":
         st.info(
@@ -430,17 +453,30 @@ if trip_options:
             "Top View = 1단의 평면(자리1·자리2), Rear View = 위로 N단 적층된 단면."
         )
 
-    view_col1, view_col2 = st.columns(2)
-    with view_col1:
-        st.markdown("**📐 Top View (평면도)**")
-        st.plotly_chart(
-            draw_top_view(sel_trip, truck, spacing),
-            width="stretch",
+    tab_2d, tab_3d = st.tabs(["📐 2D 도식 (Top + Rear)", "🎲 3D 미리보기"])
+
+    with tab_2d:
+        view_col1, view_col2 = st.columns(2)
+        with view_col1:
+            st.markdown("**📐 Top View (평면도)**")
+            st.plotly_chart(
+                draw_top_view(sel_trip, truck, spacing),
+                width="stretch",
+            )
+        with view_col2:
+            st.markdown("**📐 Rear View (뒷면도)**")
+            st.plotly_chart(
+                draw_rear_view(sel_trip, truck, spacing),
+                width="stretch",
+            )
+
+    with tab_3d:
+        st.caption(
+            "마우스로 **드래그=회전 / 휠=확대축소 / 우클릭+드래그=이동**. "
+            "박스 위에 마우스를 올리면 아이템 이름·중량이 표시됩니다."
         )
-    with view_col2:
-        st.markdown("**📐 Rear View (뒷면도)**")
         st.plotly_chart(
-            draw_rear_view(sel_trip, truck, spacing),
+            draw_3d_view(sel_trip, truck, spacing),
             width="stretch",
         )
 
