@@ -12,7 +12,7 @@ from typing import Literal
 
 PanelKind = Literal["floor", "wall", "lshape"]
 TruckType = Literal["lowbed", "extendable", "aframe"]
-SectionType = Literal["SHS", "RHS", "H", "C", "L"]
+SectionType = Literal["SHS", "RHS", "H", "C", "L", "CFT"]
 
 
 @dataclass(frozen=True)
