@@ -521,14 +521,13 @@ st.dataframe(pd.DataFrame(trip_rows), use_container_width=True, hide_index=True)
 if result.trips:
     util_rows = []
     for t in result.trips:
-        label = "모듈" if t.kind == "module" else "패널"
+        # x축 라벨에 종류 포함 → 회차마다 항상 "중량 / 길이" 2개 막대가 같은 위치에 옴
+        x_label = f"{t.trip_no}회({('모듈' if t.kind == 'module' else '패널')})"
         util_rows.append(
-            {"회차": t.trip_no, "적재율(%)": round(t.weight_utilization, 1),
-             "구분": f"{label} — 중량"}
+            {"회차": x_label, "적재율(%)": round(t.weight_utilization, 1), "구분": "중량"}
         )
         util_rows.append(
-            {"회차": t.trip_no, "적재율(%)": round(t.length_utilization, 1),
-             "구분": f"{label} — 길이"}
+            {"회차": x_label, "적재율(%)": round(t.length_utilization, 1), "구분": "길이"}
         )
     df_util = pd.DataFrame(util_rows)
     fig_util = px.bar(
@@ -537,13 +536,11 @@ if result.trips:
         y="적재율(%)",
         color="구분",
         barmode="group",
-        title="회차별 적재율 — 중량 vs 길이 (둘 중 높은 값이 실질 적재율)",
+        title="회차별 적재율 — 중량 vs 길이",
         text="적재율(%)",
         color_discrete_map={
-            "모듈 — 중량": "#4C72B0",
-            "모듈 — 길이": "#55A868",
-            "패널 — 중량": "#C44E52",
-            "패널 — 길이": "#DD8452",
+            "중량": "#4C72B0",
+            "길이": "#55A868",
         },
     )
     fig_util.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
