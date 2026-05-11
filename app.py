@@ -228,6 +228,13 @@ def _panel_form(idx: int, kind: str, defaults: list, key_prefix: str) -> list[Pa
     col_sec = None
     extra_weight_kg = 0.0
 
+    # 플로어 패널: 데크플레이트 + 콘크리트 180mm 슬래브 무게 자동 계산
+    # 단위중량 350 kg/m² (강재 데크 ~10 kg/m² + 콘크리트 충전 ~340 kg/m²)
+    FLOOR_SLAB_UNIT_WEIGHT = 350.0  # kg/m²
+    if kind == "floor":
+        slab_area_m2 = (float(width) / 1000.0) * (float(length) / 1000.0)
+        extra_weight_kg = FLOOR_SLAB_UNIT_WEIGHT * slab_area_m2
+
     if kind == "wall":
         col_sec = _section_select("기둥", d[5], f"{key_prefix}col_{idx}")
 
@@ -283,6 +290,13 @@ def _panel_form(idx: int, kind: str, defaults: list, key_prefix: str) -> list[Pa
         st.info(
             f"🪶 자동 산출 무게: **{sample.weight:,.0f} kg/매**  "
             f"(구조 프레임 {frame_w:,.0f} kg + 비내력벽 {extra_weight_kg:,.0f} kg)"
+        )
+    elif kind == "floor":
+        frame_w = sample.weight - extra_weight_kg
+        st.info(
+            f"🪶 자동 산출 무게: **{sample.weight:,.0f} kg/매**  "
+            f"(구조 프레임 {frame_w:,.0f} kg + 슬래브 {extra_weight_kg:,.0f} kg  "
+            f"※ 데크플레이트+콘크리트 180mm, 350 kg/m²)"
         )
     else:
         st.info(f"🪶 자동 산출 무게 (부재만): **{sample.weight:,.0f} kg/매**")
