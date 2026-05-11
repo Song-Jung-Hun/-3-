@@ -13,8 +13,8 @@ import plotly.express as px
 import streamlit as st
 
 from src.models import (
-    DunnageSpec, Module, Panel, SpacingParams,
-    load_road_classes, load_trucks,
+    DunnageSpec, Module, Panel, Section, SpacingParams,
+    load_road_classes, load_sections, load_trucks,
 )
 from src.packer import apply_truck_overrides, pack_items, simulate_manual_trip
 from src.visualizer import draw_3d_view, draw_rear_view, draw_top_view
@@ -33,10 +33,12 @@ st.set_page_config(
 
 @st.cache_data
 def _load_catalogs():
-    return load_trucks(), load_road_classes()
+    return load_trucks(), load_road_classes(), load_sections()
 
 
-trucks, roads = _load_catalogs()
+trucks, roads, sections = _load_catalogs()
+SECTION_BY_NAME = {s.name: s for s in sections}
+SECTION_NAMES = [s.name for s in sections]
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +73,10 @@ with st.sidebar:
     n_wall_kinds = st.number_input(
         "벽체 패널 종류 수", min_value=0, max_value=10, value=1, step=1,
     )
+    n_lshape_kinds = st.number_input(
+        "L자 패널 종류 수", min_value=0, max_value=10, value=0, step=1,
+        help="바닥+벽이 ㄴ자로 합쳐진 패널",
+    )
 
     st.divider()
     st.subheader("🛣 운송 거리")
@@ -102,9 +108,16 @@ with st.sidebar:
     )
 
     st.divider()
-    with st.expander("🚛 모듈러 운송 차량 카탈로그 (3종)"):
-        df_trucks = pd.DataFrame(
-            [
+    with st.expander(f"🚛 모듈러 운송 차량 카탈로그 ({len(trucks)}종)"):
+        rows = []
+        for t in trucks:
+            roads_ok = []
+            for r in roads:
+                # 차량 자체 진입 가능 여부 = 길이·폭 한도. 높이·중량은 화물에 따라 가변.
+                if t.max_length <= r.max_length and t.max_width <= r.max_width:
+                    short = r.name.split(" ")[0]
+                    roads_ok.append(short)
+            rows.append(
                 {
                     "차량": t.name,
                     "차종": t.truck_type,
@@ -112,17 +125,17 @@ with st.sidebar:
                     "폭(mm)": t.max_width,
                     "높이(mm)": t.max_height,
                     "적재(kg)": t.max_weight,
+                    "운행 가능 도로": " / ".join(roads_ok) if roads_ok else "없음",
                 }
-                for t in trucks
-            ]
-        )
+            )
+        df_trucks = pd.DataFrame(rows)
         st.dataframe(df_trucks, hide_index=True, width="stretch")
         st.caption(
-            "**lowbed** = 저상 트레일러 (모듈·플로어 패널) / "
-            "**extendable** = 확장형 광폭 트레일러 (광폭 모듈) / "
+            "**lowbed** = 저상 트레일러 (모듈·플로어·L자 패널) / "
+            "**extendable** = 확장형 광폭 트레일러 (광폭 모듈·L자 패널, 광로 전용) / "
             "**aframe** = A-frame 트레일러 (벽체 패널 세워서). "
-            "출처: LH §2.7.1, 한국특장차, PCI MNL-122. "
-            "`references/` 폴더 자료 + `data/trucks.json` 직접 수정 가능."
+            "차량 길이/폭/높이가 도로 한도를 넘으면 그 도로 진입 불가. "
+            "출처: LH §2.7.1, 한국특장차, PCI MNL-122."
         )
 
 
@@ -131,37 +144,64 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 MODULE_DEFAULTS = [
-    ("침실 모듈", 3000, 6000, 3000, 7000, 0),
-    ("거실 광폭모듈", 3400, 9000, 3000, 9500, 0),
-    ("주방 모듈", 3000, 6000, 3000, 7500, 0),
-    ("욕실 수직모듈", 2400, 3000, 3000, 4500, 0),
-    ("기타 모듈", 3000, 6000, 3000, 7000, 0),
+    ("침실 모듈", 3000, 6000, 3000, "SHS 200x200x8", "SHS 150x150x6", 0),
+    ("거실 광폭모듈", 3400, 9000, 3000, "SHS 250x250x9", "SHS 200x200x8", 0),
+    ("주방 모듈", 3000, 6000, 3000, "SHS 200x200x8", "SHS 150x150x6", 0),
+    ("욕실 수직모듈", 2400, 3000, 3000, "SHS 175x175x8", "SHS 125x125x6", 0),
+    ("기타 모듈", 3000, 6000, 3000, "SHS 200x200x8", "SHS 150x150x6", 0),
 ]
 
 FLOOR_DEFAULTS = [
-    ("거실 플로어", 3000, 9000, 200, 12960, 0),
-    ("주방 플로어", 3000, 6000, 200, 8640, 0),
-    ("기타 플로어", 3000, 9000, 200, 12960, 0),
+    ("거실 플로어", 3000, 9000, 200, "H 200x100x5.5x8", 0),
+    ("주방 플로어", 3000, 6000, 200, "H 200x100x5.5x8", 0),
+    ("기타 플로어", 3000, 9000, 200, "H 200x100x5.5x8", 0),
 ]
 
 WALL_DEFAULTS = [
-    ("세대간벽", 3000, 9000, 150, 9720, 0),
-    ("외피벽체", 3000, 9000, 200, 12960, 0),
-    ("기타 벽체", 3000, 6000, 150, 6480, 0),
+    ("세대간벽", 3000, 9000, 150, "C 150x75x6.5x10", "SHS 150x150x6", 0),
+    ("외피벽체", 3000, 9000, 200, "C 200x80x7.5x11", "SHS 175x175x8", 0),
+    ("기타 벽체", 3000, 6000, 150, "C 150x75x6.5x10", "SHS 150x150x6", 0),
 ]
+
+# L자 패널: (이름, 폭, 바닥길이, 두께, 벽높이, 보단면, 기둥단면, 수량)
+LSHAPE_DEFAULTS = [
+    ("욕실 L자", 3000, 6000, 200, 2800, "H 200x100x5.5x8", "SHS 150x150x6", 0),
+    ("주방 L자", 3000, 6000, 200, 2800, "H 200x100x5.5x8", "SHS 150x150x6", 0),
+    ("기타 L자", 3000, 6000, 200, 2800, "H 200x100x5.5x8", "SHS 150x150x6", 0),
+]
+
+
+def _section_select(label: str, default_name: str, key: str) -> Section:
+    """단면 선택 selectbox + 단위중량 표시."""
+    try:
+        idx = SECTION_NAMES.index(default_name)
+    except ValueError:
+        idx = 0
+    chosen = st.selectbox(label, options=SECTION_NAMES, index=idx, key=key)
+    sec = SECTION_BY_NAME[chosen]
+    st.caption(f"  → {sec.weight_per_m} kg/m")
+    return sec
 
 
 def _module_form(idx: int) -> list[Module]:
     d = MODULE_DEFAULTS[idx] if idx < len(MODULE_DEFAULTS) else MODULE_DEFAULTS[-1]
     name = st.text_input("이름", value=d[0], key=f"mname_{idx}")
-    c1, c2 = st.columns(2)
-    with c1:
-        width = st.number_input("폭 (mm)", 1000, 5000, d[1], 100, key=f"mw_{idx}")
-        length = st.number_input("길이 (mm)", 2000, 20000, d[2], 100, key=f"ml_{idx}")
-        height = st.number_input("높이 (mm)", 1500, 5000, d[3], 100, key=f"mh_{idx}")
-    with c2:
-        weight = st.number_input("중량 (kg)", 500, 40000, d[4], 100, key=f"mwt_{idx}")
-        count = st.number_input("운송 수량 (EA)", 0, 500, d[5], 1, key=f"mc_{idx}")
+    width = st.number_input("폭 (mm)", 1000, 5000, d[1], 100, key=f"mw_{idx}")
+    length = st.number_input("길이 (mm)", 2000, 20000, d[2], 100, key=f"ml_{idx}")
+    height = st.number_input("높이 (mm)", 1500, 5000, d[3], 100, key=f"mh_{idx}")
+
+    col_sec = _section_select("기둥", d[4], f"mcol_{idx}")
+    beam_sec = _section_select("보", d[5], f"mbeam_{idx}")
+
+    count = st.number_input("운송 수량 (EA)", 0, 500, d[6], 1, key=f"mc_{idx}")
+
+    # 자동 무게 표시
+    sample = Module(
+        name="_preview",
+        width=float(width), length=float(length), height=float(height),
+        column_section=col_sec, beam_section=beam_sec,
+    )
+    st.info(f"🪶 자동 산출 무게: **{sample.weight:,.0f} kg/매**")
 
     return [
         Module(
@@ -169,7 +209,8 @@ def _module_form(idx: int) -> list[Module]:
             width=float(width),
             length=float(length),
             height=float(height),
-            weight=float(weight),
+            column_section=col_sec,
+            beam_section=beam_sec,
         )
         for j in range(int(count))
     ]
@@ -178,14 +219,24 @@ def _module_form(idx: int) -> list[Module]:
 def _panel_form(idx: int, kind: str, defaults: list, key_prefix: str) -> list[Panel]:
     d = defaults[idx] if idx < len(defaults) else defaults[-1]
     name = st.text_input("이름", value=d[0], key=f"{key_prefix}name_{idx}")
-    c1, c2 = st.columns(2)
-    with c1:
-        width = st.number_input("폭 (mm)", 500, 5000, d[1], 100, key=f"{key_prefix}w_{idx}")
-        length = st.number_input("길이 (mm)", 1000, 20000, d[2], 100, key=f"{key_prefix}l_{idx}")
-        thickness = st.number_input("두께 (mm)", 50, 1000, d[3], 10, key=f"{key_prefix}t_{idx}")
-    with c2:
-        weight = st.number_input("중량 (kg, 1매)", 100, 20000, d[4], 100, key=f"{key_prefix}wt_{idx}")
-        count = st.number_input("운송 수량 (EA)", 0, 500, d[5], 1, key=f"{key_prefix}c_{idx}")
+    width = st.number_input("폭 (mm)", 500, 5000, d[1], 100, key=f"{key_prefix}w_{idx}")
+    length = st.number_input("길이 (mm)", 1000, 20000, d[2], 100, key=f"{key_prefix}l_{idx}")
+    thickness = st.number_input("두께 (mm)", 50, 1000, d[3], 10, key=f"{key_prefix}t_{idx}")
+
+    beam_sec = _section_select("보", d[4], f"{key_prefix}beam_{idx}")
+    col_sec = None
+    if kind == "wall":
+        col_sec = _section_select("기둥", d[5], f"{key_prefix}col_{idx}")
+
+    count_default = d[-1]
+    count = st.number_input("운송 수량 (EA)", 0, 500, count_default, 1, key=f"{key_prefix}c_{idx}")
+
+    sample = Panel(
+        name="_preview", kind=kind,
+        width=float(width), length=float(length), thickness=float(thickness),
+        beam_section=beam_sec, column_section=col_sec,
+    )
+    st.info(f"🪶 자동 산출 무게 (부재만): **{sample.weight:,.0f} kg/매**")
 
     return [
         Panel(
@@ -194,7 +245,44 @@ def _panel_form(idx: int, kind: str, defaults: list, key_prefix: str) -> list[Pa
             width=float(width),
             length=float(length),
             thickness=float(thickness),
-            weight=float(weight),
+            beam_section=beam_sec,
+            column_section=col_sec,
+        )
+        for j in range(int(count))
+    ]
+
+
+def _lshape_form(idx: int) -> list[Panel]:
+    d = LSHAPE_DEFAULTS[idx] if idx < len(LSHAPE_DEFAULTS) else LSHAPE_DEFAULTS[-1]
+    name = st.text_input("이름", value=d[0], key=f"lname_{idx}")
+    width = st.number_input("폭 (mm)", 500, 5000, d[1], 100, key=f"lw_{idx}")
+    length = st.number_input("바닥 길이 (mm)", 1000, 20000, d[2], 100, key=f"ll_{idx}")
+    thickness = st.number_input("두께 (mm)", 50, 1000, d[3], 10, key=f"lt_{idx}")
+    wall_height = st.number_input("벽 높이 (mm)", 500, 5000, d[4], 100, key=f"lwh_{idx}")
+
+    beam_sec = _section_select("보", d[5], f"lbeam_{idx}")
+    col_sec = _section_select("기둥", d[6], f"lcol_{idx}")
+
+    count = st.number_input("운송 수량 (EA)", 0, 500, d[-1], 1, key=f"lc_{idx}")
+
+    sample = Panel(
+        name="_preview", kind="lshape",
+        width=float(width), length=float(length), thickness=float(thickness),
+        beam_section=beam_sec, column_section=col_sec,
+        wall_height=float(wall_height),
+    )
+    st.info(f"🪶 자동 산출 무게 (부재만): **{sample.weight:,.0f} kg/매**")
+
+    return [
+        Panel(
+            name=f"{name}-{j + 1}",
+            kind="lshape",
+            width=float(width),
+            length=float(length),
+            thickness=float(thickness),
+            beam_section=beam_sec,
+            column_section=col_sec,
+            wall_height=float(wall_height),
         )
         for j in range(int(count))
     ]
@@ -236,6 +324,14 @@ if n_wall_kinds > 0:
         with cols[i % 3]:
             with st.expander(f"벽체 종류 {i + 1}", expanded=True):
                 panels.extend(_panel_form(i, "wall", WALL_DEFAULTS, "w"))
+
+if n_lshape_kinds > 0:
+    st.subheader(f"🔲 L자 패널 ({n_lshape_kinds}종)")
+    cols = st.columns(min(int(n_lshape_kinds), 3))
+    for i in range(int(n_lshape_kinds)):
+        with cols[i % 3]:
+            with st.expander(f"L자 종류 {i + 1}", expanded=True):
+                panels.extend(_lshape_form(i))
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +438,8 @@ for trip in result.trips:
         sample = trip.items[0] if trip.items else None
         if sample and sample.kind == "wall":
             extra = f"세움 {trip.panels_per_row}매 (폭방향)"
+        elif sample and sample.kind == "lshape":
+            extra = f"L자 {trip.panels_per_row}매 나란히 (적층 불가)"
         else:
             extra = f"{trip.panels_per_row}열 × {trip.n_layers}단"
     elif trip.kind == "module":
@@ -386,7 +484,7 @@ if result.trips:
     )
     fig_util.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
     fig_util.update_layout(yaxis_range=[0, 110])
-    st.plotly_chart(fig_util, width="stretch")
+    st.plotly_chart(fig_util, width="stretch", key="util_chart")
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +550,11 @@ if trip_options:
             "🟧 **벽체 패널 회차 (A-frame 트레일러)** — 패널을 **세워서 폭 방향에 두께 N매 줄짓기**. "
             "PCI MNL-122 표준. Top View와 Rear View 모두 세운 자세로 표시."
         )
+    elif sel_trip.items and sel_trip.items[0].kind == "lshape":
+        st.info(
+            "🔲 **L자 패널 회차** — 바닥+벽 ㄴ자 패널을 **눕혀서 길이 방향 나란히**. "
+            "벽 부분이 위로 솟아 적층 불가. Top View = 평면 배치, Rear View = ㄴ자 단면."
+        )
     else:
         st.info(
             "⬜ **플로어 패널 회차** — 패널을 눕혀서 적층. "
@@ -467,12 +570,14 @@ if trip_options:
             st.plotly_chart(
                 draw_top_view(sel_trip, truck, spacing),
                 width="stretch",
+                key=f"auto_top_{sel_trip.trip_no}",
             )
         with view_col2:
             st.markdown("**📐 Rear View (뒷면도)**")
             st.plotly_chart(
                 draw_rear_view(sel_trip, truck, spacing),
                 width="stretch",
+                key=f"auto_rear_{sel_trip.trip_no}",
             )
 
     with tab_3d:
@@ -483,6 +588,7 @@ if trip_options:
         st.plotly_chart(
             draw_3d_view(sel_trip, truck, spacing),
             width="stretch",
+            key=f"auto_3d_{sel_trip.trip_no}",
         )
 
 
@@ -500,7 +606,7 @@ st.caption(
 with st.expander("🔧 수동 배치 입력", expanded=False):
     cargo_kind = st.radio(
         "화물 종류",
-        options=["모듈", "플로어 패널", "벽체 패널"],
+        options=["모듈", "플로어 패널", "벽체 패널", "L자 패널"],
         horizontal=True,
     )
 
@@ -509,8 +615,10 @@ with st.expander("🔧 수동 배치 입력", expanded=False):
         pool = {m.name: m for m in modules}
     elif cargo_kind == "플로어 패널":
         pool = {p.name: p for p in panels if isinstance(p, Panel) and p.kind == "floor"}
-    else:
+    elif cargo_kind == "벽체 패널":
         pool = {p.name: p for p in panels if isinstance(p, Panel) and p.kind == "wall"}
+    else:  # L자 패널
+        pool = {p.name: p for p in panels if isinstance(p, Panel) and p.kind == "lshape"}
 
     if not pool:
         st.info(f"입력된 {cargo_kind}이 없습니다. 위 입력 폼에서 먼저 화물을 추가해 주세요.")

@@ -19,6 +19,7 @@
 | 05 | [05_PCI_운송더니지_가이드.md](05_PCI_운송더니지_가이드.md) | PCI MNL-122 / Wells Concrete 운송·하역 더니지 가이드 | `src/models.py` SpacingParams 디폴트값 |
 | 06 | [06_KOSHA_화물결박_가이드.md](06_KOSHA_화물결박_가이드.md) | KOSHA 화물 결박 안전지침 — 결박 공간 표준 | `src/models.py` SpacingParams.truck_edge_clearance_mm |
 | 07 | [07_목재더니지_밀도_무게.md](07_목재더니지_밀도_무게.md) | 소나무·더글라스 퍼 목재 밀도 — 더니지 무게 산출 | `src/packer.py` 더니지 무게 합산 |
+| 08 | [08_KS강재_단면제원.md](08_KS강재_단면제원.md) | KS D 3568/3502/3530 강재 단면 44종 (SHS·RHS·H·C·L) + 단위중량 | `data/sections.json` + `src/models.py` Section/Module/Panel 무게 자동 계산 |
 
 ## 출처 신뢰도 단계
 

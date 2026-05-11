@@ -4,6 +4,11 @@
   - 모듈: 길이방향 N매 1열 (Top), 폭방향 1매 + 모듈 높이 (Rear)
   - 플로어 패널: 1단 평면 N매 + 위로 적층 (Top = 1단, Rear = N단 적층)
   - 벽체 패널: 폭방향 두께 N매 줄짓기 (세움 자세, A-frame trailer)
+  - L자 패널: 길이방향 N매 나란히 (눕혀서, 벽 부분이 위로 솟음)
+
+FFD 혼적 대응:
+  - 모듈/L자/벽체 패널: 서로 다른 사양의 아이템도 같은 트럭에 혼적 가능
+  - 각 아이템의 실제 dimensions를 개별적으로 사용해 그림
 """
 from __future__ import annotations
 
@@ -193,31 +198,71 @@ def draw_top_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             )
             cursor += item.length + gap
 
-    elif trip.items and trip.items[0].kind == "wall":
-        # 벽체 패널 — 세워서 폭방향에 두께 N매
-        sample = trip.items[0]
+    elif trip.items and isinstance(trip.items[0], Panel) and trip.items[0].kind == "wall":
+        # 벽체 패널 — 세워서 폭방향에 두께 N매 (아이템별 사양 개별 적용)
         n = len(trip.items)
-        length_x = (truck.max_length - sample.length) / 2
         cursor_y = edge
-        for k in range(n):
+        for k, item in enumerate(trip.items):
+            # 각 패널의 길이를 트럭 가운데 정렬
+            length_x = (truck.max_length - item.length) / 2
             fig.add_shape(
                 type="rect",
                 x0=length_x, y0=cursor_y,
-                x1=length_x + sample.length,
-                y1=cursor_y + sample.thickness,
+                x1=length_x + item.length,
+                y1=cursor_y + item.thickness,
                 line=dict(color="#333", width=1),
                 fillcolor=SEAT_PALETTE[k % len(SEAT_PALETTE)],
                 opacity=0.85,
             )
-            cursor_y += sample.thickness + gap
+            fig.add_annotation(
+                x=truck.max_length / 2, y=cursor_y + item.thickness / 2,
+                text=f"<b>{item.name}</b>  L={int(item.length)}, T={int(item.thickness)}mm",
+                showarrow=False, font=dict(size=9, color="#333"),
+            )
+            cursor_y += item.thickness + gap
+        total_thick = sum(i.thickness for i in trip.items) + max(0, n - 1) * gap
         fig.add_annotation(
-            x=truck.max_length / 2, y=truck.max_width / 2,
+            x=truck.max_length / 2, y=truck.max_width + 250,
             text=(
-                f"<b>벽체 {n}매 세워서 줄짓기</b><br>"
-                f"두께 {int(sample.thickness)}mm × {n}매 (폭방향)<br>"
-                f"길이 {int(sample.length)}mm"
+                f"<b>벽체 {n}매 세워서 줄짓기</b> (A-frame 트레일러)<br>"
+                f"폭 방향 총 두께 합: {int(total_thick)}mm"
             ),
             showarrow=False, font=dict(size=11, color="#333"),
+        )
+
+    elif trip.items and isinstance(trip.items[0], Panel) and trip.items[0].kind == "lshape":
+        # L자 패널 — 눕혀서 길이 방향 나란히 (벽 부분이 위로 솟음)
+        _edge_zones_top(fig, truck, edge)
+        cursor = edge
+        n = len(trip.items)
+        for k, item in enumerate(trip.items):
+            cy = (truck.max_width - item.width) / 2
+            # 바닥 부분 (ㄴ자 가로 bar)
+            fig.add_shape(
+                type="rect",
+                x0=cursor, y0=cy,
+                x1=cursor + item.length, y1=cy + item.width,
+                line=dict(color="#8B4513", width=2),
+                fillcolor=SEAT_PALETTE[k % len(SEAT_PALETTE)],
+                opacity=0.7,
+            )
+            fig.add_annotation(
+                x=cursor + item.length / 2, y=cy + item.width / 2,
+                text=(
+                    f"<b>{item.name}</b><br>"
+                    f"{int(item.length)}×{int(item.width)}mm<br>"
+                    f"벽↑{int(item.wall_height)}mm"
+                ),
+                showarrow=False, font=dict(size=9),
+            )
+            cursor += item.length + gap
+        fig.add_annotation(
+            x=truck.max_length / 2, y=truck.max_width + 250,
+            text=(
+                f"<b>L자 패널 {n}매</b> — 눕혀서 나란히 적재<br>"
+                f"※ 벽 부분이 위로 솟음 → Rear View 참조"
+            ),
+            showarrow=False, font=dict(size=11, color="darkred"),
         )
 
     else:
@@ -287,47 +332,91 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
     edge = sp.truck_edge_clearance_mm
 
     if trip.kind == "module":
-        # 모듈 1매 폭방향 가운데 (회차 표 모듈은 모두 같은 사양 가정)
-        item = trip.items[0]
-        cx = (truck.max_width - item.width) / 2
+        # 모듈 N매 길이 방향 1열 — 가장 큰 모듈 기준으로 단면 도식
+        tallest = max(trip.items, key=lambda i: i.height)
+        cx = (truck.max_width - tallest.width) / 2
         fig.add_shape(
             type="rect",
             x0=cx, y0=veh_h,
-            x1=cx + item.width, y1=veh_h + item.height,
+            x1=cx + tallest.width, y1=veh_h + tallest.height,
             line=dict(color=MODULE_COLOR, width=2),
             fillcolor=MODULE_COLOR, opacity=0.5,
         )
+        # 모듈이 여러 사양 혼적인지 확인
+        names = list(dict.fromkeys(i.name for i in trip.items))  # 순서 보존 deduplicate
+        name_str = " + ".join(names) if len(names) > 1 else names[0]
         fig.add_annotation(
-            x=cx + item.width / 2, y=veh_h + item.height / 2,
+            x=cx + tallest.width / 2, y=veh_h + tallest.height / 2,
             text=(
-                f"<b>{item.name}</b><br>"
-                f"폭 {int(item.width)} × 높이 {int(item.height)}mm<br>"
-                f"※ 같은 모듈 {len(trip.items)}매가 길이 방향 1열로 적재"
+                f"<b>{name_str}</b><br>"
+                f"폭 {int(tallest.width)} × 높이 {int(tallest.height)}mm<br>"
+                f"※ {len(trip.items)}매가 길이 방향 1열로 적재"
             ),
             showarrow=False, font=dict(size=10),
         )
 
-    elif trip.items and trip.items[0].kind == "wall":
-        # 벽체 패널 — 세워서 폭방향에 두께 N매, 높이는 패널 폭
-        sample = trip.items[0]
+    elif trip.items and isinstance(trip.items[0], Panel) and trip.items[0].kind == "wall":
+        # 벽체 패널 — 세워서 폭방향에 두께 N매, 높이는 각 패널 폭
         n = len(trip.items)
         cursor_x = edge
-        for k in range(n):
+        for k, item in enumerate(trip.items):
             fig.add_shape(
                 type="rect",
                 x0=cursor_x, y0=veh_h,
-                x1=cursor_x + sample.thickness,
-                y1=veh_h + sample.width,
+                x1=cursor_x + item.thickness,
+                y1=veh_h + item.width,
                 line=dict(color="#333", width=1),
                 fillcolor=SEAT_PALETTE[k % len(SEAT_PALETTE)],
                 opacity=0.85,
             )
-            cursor_x += sample.thickness + gap
+            fig.add_annotation(
+                x=cursor_x + item.thickness / 2,
+                y=veh_h + item.width + 150,
+                text=f"{k + 1}",
+                showarrow=False, font=dict(size=9, color="#333"),
+            )
+            cursor_x += item.thickness + gap
+        max_w = max(i.width for i in trip.items)
         fig.add_annotation(
-            x=truck.max_width / 2, y=veh_h + sample.width + 200,
+            x=truck.max_width / 2, y=veh_h + max_w + 350,
             text=(
-                f"<b>벽체 {n}매 세움</b> · 두께 {int(sample.thickness)}mm × {n}매<br>"
-                f"높이 = 패널 폭 {int(sample.width)}mm (A-frame 트레일러)"
+                f"<b>벽체 {n}매 세움</b><br>"
+                f"높이 = 각 패널 폭 (A-frame 트레일러)"
+            ),
+            showarrow=False, font=dict(size=10, color="darkred"),
+        )
+
+    elif trip.items and isinstance(trip.items[0], Panel) and trip.items[0].kind == "lshape":
+        # L자 패널 단면 (ㄴ자) — 첫 번째 패널 기준 대표 단면 도식
+        WALL_THICK_VIS = 150  # 벽 두께 시각화용 추정값 (mm)
+        sample = trip.items[0]
+        cx = (truck.max_width - sample.width) / 2
+        # 바닥 부분 (가로 bar)
+        fig.add_shape(
+            type="rect",
+            x0=cx, y0=veh_h,
+            x1=cx + sample.width, y1=veh_h + sample.thickness,
+            line=dict(color="#8B4513", width=2),
+            fillcolor="#DEB887",
+            opacity=0.85,
+        )
+        # 벽 부분 (세로 bar, 왼쪽 끝에서 위로 솟음)
+        fig.add_shape(
+            type="rect",
+            x0=cx, y0=veh_h + sample.thickness,
+            x1=cx + WALL_THICK_VIS, y1=veh_h + sample.thickness + sample.wall_height,
+            line=dict(color="#8B4513", width=2),
+            fillcolor="#A0522D",
+            opacity=0.85,
+        )
+        total_h = sample.thickness + sample.wall_height
+        fig.add_annotation(
+            x=truck.max_width / 2, y=veh_h + total_h + 350,
+            text=(
+                f"<b>L자 단면 (ㄴ자) — {len(trip.items)}매</b><br>"
+                f"바닥부: 폭 {int(sample.width)}mm × 두께 {int(sample.thickness)}mm<br>"
+                f"벽부: 높이 {int(sample.wall_height)}mm (위로 솟음)<br>"
+                f"총 운송 높이: {int(total_h)}mm"
             ),
             showarrow=False, font=dict(size=10, color="darkred"),
         )
@@ -528,24 +617,49 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             cursor += item.length + gap
 
     elif isinstance(trip.items[0], Panel) and trip.items[0].kind == "wall":
-        # 벽체 패널 — 폭 방향에 두께 N매 세움 (높이 = 패널 폭)
-        sample = trip.items[0]
+        # 벽체 패널 — 폭 방향에 두께 N매 세움 (아이템별 사양 개별 적용)
         n = len(trip.items)
-        length_x0 = (truck.max_length - sample.length) / 2
         cursor_y = edge
-        for k in range(n):
+        for k, item in enumerate(trip.items):
             color = PALETTE_3D[k % len(PALETTE_3D)]
-            item = trip.items[k]
+            # 각 패널의 길이로 트럭 가운데 정렬
+            length_x0 = (truck.max_length - item.length) / 2
             for tr in _box_mesh(
                 length_x0, cursor_y, veh_h,
-                length_x0 + sample.length,
-                cursor_y + sample.thickness,
-                veh_h + sample.width,
+                length_x0 + item.length,
+                cursor_y + item.thickness,
+                veh_h + item.width,
                 color, 0.7,
                 f"{item.name} ({int(item.weight)}kg, 세움)",
             ):
                 fig.add_trace(tr)
-            cursor_y += sample.thickness + gap
+            cursor_y += item.thickness + gap
+
+    elif isinstance(trip.items[0], Panel) and trip.items[0].kind == "lshape":
+        # L자 패널 — 눕혀서 나란히, 바닥 박스 + 벽 박스
+        WALL_THICK_VIS = 150  # 벽 두께 시각화용 추정값 (mm)
+        cursor = edge
+        for k, item in enumerate(trip.items):
+            cy = (truck.max_width - item.width) / 2
+            color = PALETTE_3D[k % len(PALETTE_3D)]
+            # 바닥 박스 (눕혀진 부분)
+            for tr in _box_mesh(
+                cursor, cy, veh_h,
+                cursor + item.length, cy + item.width, veh_h + item.thickness,
+                color, 0.70,
+                f"{item.name} 바닥부 ({int(item.weight)}kg)",
+            ):
+                fig.add_trace(tr)
+            # 벽 박스 (한쪽 끝에서 위로 솟음)
+            for tr in _box_mesh(
+                cursor, cy, veh_h + item.thickness,
+                cursor + item.length, cy + WALL_THICK_VIS,
+                veh_h + item.thickness + item.wall_height,
+                "#A0522D", 0.65,
+                f"{item.name} 벽부 (높이 {int(item.wall_height)}mm)",
+            ):
+                fig.add_trace(tr)
+            cursor += item.length + gap
 
     else:
         # 플로어 패널 — 1단 ppr매 × n_layers 단 적층

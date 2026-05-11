@@ -38,6 +38,9 @@ def _item_dims(item: Item) -> tuple[float, float, float, float]:
     if isinstance(item, Module):
         return item.length, item.width, item.height, item.weight
     # Panel
+    if item.kind == "lshape" and item.wall_height > 0:
+        # L자 패널: 벽 부분이 위로 솟으므로 높이 = wall_height
+        return item.length, item.width, item.wall_height, item.weight
     return item.length, item.width, item.thickness, item.weight
 
 

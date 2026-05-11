@@ -10,19 +10,48 @@ from pathlib import Path
 from typing import Literal
 
 
-PanelKind = Literal["floor", "wall"]
+PanelKind = Literal["floor", "wall", "lshape"]
 TruckType = Literal["lowbed", "extendable", "aframe"]
+SectionType = Literal["SHS", "RHS", "H", "C", "L"]
+
+
+@dataclass(frozen=True)
+class Section:
+    """KS 표준 강재 단면.
+
+    근거: KS D 3568 (각형강관), KS D 3502/3503 (H형강·L형강), KS D 3530 (C형강).
+    weight_per_m = 단면적(mm²) × 강재 밀도(7,850 kg/m³) × 1m / 10⁹.
+    """
+
+    name: str                # 예: "SHS 200x200x8"
+    section_type: SectionType
+    width: float             # mm
+    height: float            # mm
+    thickness: float         # mm (SHS/RHS는 두께, H/C는 웨브 두께, L은 변 두께)
+    weight_per_m: float      # kg/m
+    flange_thickness: float = 0.0  # H/C형강 플랜지 두께 (그 외는 0)
 
 
 @dataclass(frozen=True)
 class Module:
-    """수평/수직 모듈."""
+    """수평/수직 모듈. 무게는 부재(기둥+보)에서 자동 계산."""
 
     name: str
-    width: float   # mm
-    length: float  # mm
-    height: float  # mm
-    weight: float  # kg
+    width: float                   # mm
+    length: float                  # mm
+    height: float                  # mm
+    column_section: Section        # 4 모서리 기둥 단면
+    beam_section: Section          # 천장보·바닥보 공통 단면
+
+    @property
+    def weight(self) -> float:
+        """프레임 무게 = 4 기둥 + 4 천장보 + 4 바닥보."""
+        col_total_m = (4 * self.height) / 1000.0
+        beam_total_m = (4 * (self.width + self.length) * 2) / 1000.0  # 천장+바닥
+        return (
+            col_total_m * self.column_section.weight_per_m
+            + beam_total_m * self.beam_section.weight_per_m
+        )
 
     def is_wide(self) -> bool:
         """광폭 모듈 여부 (폭 3.0m 초과 → 확장형 광폭 트레일러 필요)."""
@@ -31,14 +60,39 @@ class Module:
 
 @dataclass(frozen=True)
 class Panel:
-    """플로어/벽체 구조패널."""
+    """플로어/벽체/L자 구조패널. 무게는 부재만 계산 (콘크리트 바닥판/벽체판 제외).
+
+    플로어 패널: 보 4개(둘레) — 2×(폭+길이)
+    벽체 패널: 보 2개(위·아래, 폭 방향) + 기둥 2개(양쪽, 길이 방향)
+    L자 패널: 보 5개(바닥 먼변+꺾임+벽 윗변 = 3×폭, 바닥 양옆 = 2×길이) + 기둥 2개(벽 양쪽, wall_height)
+    """
 
     name: str
-    kind: PanelKind   # "floor" or "wall"
-    width: float      # mm
-    length: float     # mm
-    thickness: float  # mm
-    weight: float     # kg
+    kind: PanelKind
+    width: float                          # mm
+    length: float                         # mm
+    thickness: float                      # mm (콘크리트 바닥판/벽체판 두께, 무게 계산엔 미사용)
+    beam_section: Section                 # 플로어: 둘레 보 / 벽체: 위·아래 보 / L자: 수평 보
+    column_section: Section | None = None # 벽체·L자 패널 (양쪽 기둥)
+    wall_height: float = 0.0             # L자 패널 전용 — 벽 부분 높이 (mm)
+
+    @property
+    def weight(self) -> float:
+        if self.kind == "lshape" and self.column_section is not None:
+            # L자 패널: 보 5개 + 기둥 2개
+            beam_total_m = (3 * self.width + 2 * self.length) / 1000.0
+            col_total_m = (2 * self.wall_height) / 1000.0
+            return (beam_total_m * self.beam_section.weight_per_m
+                    + col_total_m * self.column_section.weight_per_m)
+        if self.kind == "wall" and self.column_section is not None:
+            # 벽체 패널: 보 2개(위·아래, 폭 방향) + 기둥 2개(양쪽, 길이 방향)
+            beam_total_m = (2 * self.width) / 1000.0
+            col_total_m = (2 * self.length) / 1000.0
+            return (beam_total_m * self.beam_section.weight_per_m
+                    + col_total_m * self.column_section.weight_per_m)
+        # 플로어 패널: 보 4개(둘레)
+        beam_total_m = (2 * (self.width + self.length)) / 1000.0
+        return beam_total_m * self.beam_section.weight_per_m
 
 
 @dataclass(frozen=True)
@@ -117,3 +171,11 @@ def load_road_classes(path: Path | None = None) -> list[RoadClass]:
     with p.open("r", encoding="utf-8") as f:
         raw = json.load(f)
     return [RoadClass(**r) for r in raw]
+
+
+def load_sections(path: Path | None = None) -> list[Section]:
+    """KS 표준 강재 단면 카탈로그 로드."""
+    p = path or (DATA_DIR / "sections.json")
+    with p.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+    return [Section(**s) for s in raw]
