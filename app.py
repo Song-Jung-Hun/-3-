@@ -832,6 +832,187 @@ if trip_options:
 
 
 
+# ---------------------------------------------------------------------------
+# 📋 운송 결과 종합 요약표
+# ---------------------------------------------------------------------------
+
+st.divider()
+st.markdown("## 📋 운송 결과 종합 요약표")
+st.caption(
+    "입력된 모든 항목과 운송 결과를 한눈에 정리한 표입니다. "
+    "화면에서 확인하거나 CSV로 내려받을 수 있습니다."
+)
+
+# ── 운송 단가 입력 ──────────────────────────────────────────────────────────
+with st.expander("💰 운송 단가 설정 (경제성 계산용)", expanded=True):
+    st.caption(
+        "모듈러 건축 특수 트레일러 운임은 국토부 고시 대상이 아니며 업체 협의가격으로 결정됩니다. "
+        "아래 기본값은 업계 블로그·견적 사례 기반 참고치(회차당 100~250만 원)의 중간값입니다. "
+        "실제 견적으로 교체해서 사용하세요."
+    )
+    cost_col1, cost_col2 = st.columns(2)
+    with cost_col1:
+        cost_lowbed = st.number_input(
+            "저상 트레일러 단가 (원/회차)",
+            min_value=0, max_value=10_000_000, value=1_500_000, step=100_000,
+            help="25t급 저상 트레일러. 참고치 100~250만 원/회차.",
+            format="%d",
+        )
+    with cost_col2:
+        cost_extendable = st.number_input(
+            "광폭 트레일러 단가 (원/회차)",
+            min_value=0, max_value=10_000_000, value=2_000_000, step=100_000,
+            help="확장형 광폭 트레일러. 광폭 운행 허가비 포함. 저상보다 약 30~40% 높음.",
+            format="%d",
+        )
+
+# ── ① 입력 아이템 요약표 ────────────────────────────────────────────────────
+st.markdown("### ① 투입 아이템 목록")
+
+item_rows = []
+for m in modules:
+    item_rows.append({
+        "종류": "모듈",
+        "이름": m.name,
+        "폭(mm)": int(m.width),
+        "길이(mm)": int(m.length),
+        "높이/두께(mm)": int(m.height),
+        "단위무게(kg)": round(m.weight, 1),
+        "수량(EA)": 1,
+        "총무게(kg)": round(m.weight, 1),
+    })
+
+# 패널은 같은 이름·사양끼리 묶어서 표시
+_seen: dict = {}
+for p in panels:
+    key = (p.name.rsplit("-", 1)[0], p.kind, p.width, p.length, p.thickness)
+    if key not in _seen:
+        _seen[key] = {"panel": p, "count": 0}
+    _seen[key]["count"] += 1
+
+kind_label = {"floor": "플로어 패널", "wall": "벽체 패널", "lshape": "L자 패널"}
+for (base_name, kind, w, l, t), v in _seen.items():
+    p = v["panel"]
+    item_rows.append({
+        "종류": kind_label.get(kind, kind),
+        "이름": base_name,
+        "폭(mm)": int(w),
+        "길이(mm)": int(l),
+        "높이/두께(mm)": int(t),
+        "단위무게(kg)": round(p.weight, 1),
+        "수량(EA)": v["count"],
+        "총무게(kg)": round(p.weight * v["count"], 1),
+    })
+
+df_items = pd.DataFrame(item_rows)
+if not df_items.empty:
+    total_item_weight = df_items["총무게(kg)"].sum()
+    total_item_count = df_items["수량(EA)"].sum()
+    st.dataframe(df_items, use_container_width=True, hide_index=True)
+    st.caption(
+        f"총 아이템 수: **{int(total_item_count)}개** / 총 화물 중량: **{total_item_weight:,.0f} kg**"
+    )
+
+# ── ② 회차별 적재 결과표 ────────────────────────────────────────────────────
+st.markdown("### ② 회차별 적재 결과")
+
+trip_summary_rows = []
+for trip in result.trips:
+    truck_type = trip.truck.truck_type
+    unit_cost = cost_extendable if truck_type == "extendable" else cost_lowbed
+    item_names = ", ".join(
+        {i.name.rsplit("-", 1)[0] for i in trip.items}
+    )
+    trip_summary_rows.append({
+        "회차": trip.trip_no,
+        "차량": trip.truck.name,
+        "차종": trip.truck.truck_type,
+        "종류": "모듈" if trip.kind == "module" else "패널",
+        "수량(EA)": len(trip.items),
+        "아이템": item_names,
+        "화물중량(kg)": int(trip.cargo_weight),
+        "중량 적재율(%)": round(trip.weight_utilization, 1),
+        "길이 적재율(%)": round(trip.length_utilization, 1),
+        "결정인자": "중량↑" if trip.weight_utilization >= trip.length_utilization else "길이↑",
+        "운송 단가(원)": unit_cost,
+        "광폭검토": "필요" if trip.wide_check else "-",
+    })
+
+df_trip_summary = pd.DataFrame(trip_summary_rows)
+if not df_trip_summary.empty:
+    st.dataframe(df_trip_summary, use_container_width=True, hide_index=True)
+
+# ── ③ 경제성 요약 ──────────────────────────────────────────────────────────
+st.markdown("### ③ 경제성 요약")
+
+total_cost = 0
+for trip in result.trips:
+    unit_cost = cost_extendable if trip.truck.truck_type == "extendable" else cost_lowbed
+    total_cost += unit_cost
+
+lowbed_trips  = sum(1 for t in result.trips if t.truck.truck_type != "extendable")
+extendable_trips = sum(1 for t in result.trips if t.truck.truck_type == "extendable")
+total_cargo_weight = sum(t.cargo_weight for t in result.trips)
+total_round_km = result.total_trips * distance_km * 2
+
+econ_col1, econ_col2, econ_col3, econ_col4, econ_col5 = st.columns(5)
+econ_col1.metric("총 회차", f"{result.total_trips} 회")
+econ_col2.metric("저상 트레일러", f"{lowbed_trips} 회")
+econ_col3.metric("광폭 트레일러", f"{extendable_trips} 회")
+econ_col4.metric("총 운송 거리", f"{total_round_km:,.0f} km")
+econ_col5.metric("예상 운송비 합계", f"{total_cost:,.0f} 원")
+
+econ_rows = [
+    {"항목": "도로 등급", "값": road.name},
+    {"항목": "편도 거리", "값": f"{distance_km:.0f} km"},
+    {"항목": "왕복 거리 (1회차)", "값": f"{distance_km * 2:.0f} km"},
+    {"항목": "총 회차", "값": f"{result.total_trips} 회"},
+    {"항목": "  └ 모듈 회차", "값": f"{result.module_trips} 회"},
+    {"항목": "  └ 패널 회차", "값": f"{result.panel_trips} 회"},
+    {"항목": "  └ 저상 트레일러", "값": f"{lowbed_trips} 회"},
+    {"항목": "  └ 광폭 트레일러", "값": f"{extendable_trips} 회"},
+    {"항목": "총 왕복 운송 거리", "값": f"{total_round_km:,.0f} km"},
+    {"항목": "총 화물 중량", "값": f"{total_cargo_weight:,.0f} kg"},
+    {"항목": "평균 적재율", "값": f"{result.avg_utilization:.1f} %"},
+    {"항목": "저상 트레일러 단가", "값": f"{cost_lowbed:,} 원/회차"},
+    {"항목": "광폭 트레일러 단가", "값": f"{cost_extendable:,} 원/회차"},
+    {"항목": "예상 운송비 합계", "값": f"{total_cost:,} 원"},
+]
+df_econ = pd.DataFrame(econ_rows)
+st.dataframe(df_econ, use_container_width=True, hide_index=True)
+st.caption(
+    "⚠ 운송비는 업계 참고치(회차당 100~250만 원) 기반 추정값입니다. "
+    "실제 견적과 다를 수 있으며, 광폭 허가비·에스코트비·야간 운행비는 별도입니다."
+)
+
+# ── CSV 다운로드 ────────────────────────────────────────────────────────────
+st.markdown("### ④ CSV 내려받기")
+
+import io
+
+def _make_csv_bundle() -> bytes:
+    """아이템·회차·경제성 3개 테이블을 하나의 CSV로 묶어 반환."""
+    buf = io.StringIO()
+    buf.write("=== 투입 아이템 목록 ===\n")
+    df_items.to_csv(buf, index=False)
+    buf.write("\n=== 회차별 적재 결과 ===\n")
+    df_trip_summary.to_csv(buf, index=False)
+    buf.write("\n=== 경제성 요약 ===\n")
+    df_econ.to_csv(buf, index=False)
+    return buf.getvalue().encode("utf-8-sig")  # Excel에서 한글 깨짐 방지
+
+dl_col1, dl_col2 = st.columns([1, 3])
+with dl_col1:
+    st.download_button(
+        label="⬇️ CSV 다운로드",
+        data=_make_csv_bundle(),
+        file_name="운송결과_요약.csv",
+        mime="text/csv",
+    )
+with dl_col2:
+    st.caption("아이템 목록 / 회차 결과 / 경제성 요약 3개 표가 하나의 CSV 파일로 저장됩니다.")
+
+
 # Footer
 st.divider()
 st.caption(
