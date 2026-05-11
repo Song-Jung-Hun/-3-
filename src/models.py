@@ -60,11 +60,12 @@ class Module:
 
 @dataclass(frozen=True)
 class Panel:
-    """플로어/벽체/L자 구조패널. 무게는 부재만 계산 (콘크리트 바닥판/벽체판 제외).
+    """플로어/벽체/L자 구조패널.
 
     플로어 패널: 보 4개(둘레) — 2×(폭+길이)
     벽체 패널: 보 2개(위·아래, 폭 방향) + 기둥 2개(양쪽, 길이 방향)
     L자 패널: 보 5개(바닥 먼변+꺾임+벽 윗변 = 3×폭, 바닥 양옆 = 2×길이) + 기둥 2개(벽 양쪽, wall_height)
+    extra_weight_kg: 비내력벽 채움재(단열재·마감재 등) 추가 중량 (kg/매, 기본 0)
     """
 
     name: str
@@ -75,6 +76,7 @@ class Panel:
     beam_section: Section                 # 플로어: 둘레 보 / 벽체: 위·아래 보 / L자: 수평 보
     column_section: Section | None = None # 벽체·L자 패널 (양쪽 기둥)
     wall_height: float = 0.0             # L자 패널 전용 — 벽 부분 높이 (mm)
+    extra_weight_kg: float = 0.0         # 비내력벽 채움재 추가 중량 (kg/매)
 
     @property
     def weight(self) -> float:
@@ -82,17 +84,19 @@ class Panel:
             # L자 패널: 보 5개 + 기둥 2개
             beam_total_m = (3 * self.width + 2 * self.length) / 1000.0
             col_total_m = (2 * self.wall_height) / 1000.0
-            return (beam_total_m * self.beam_section.weight_per_m
-                    + col_total_m * self.column_section.weight_per_m)
+            frame_w = (beam_total_m * self.beam_section.weight_per_m
+                       + col_total_m * self.column_section.weight_per_m)
+            return frame_w + self.extra_weight_kg
         if self.kind == "wall" and self.column_section is not None:
-            # 벽체 패널: 보 2개(위·아래, 폭 방향) + 기둥 2개(양쪽, 길이 방향)
-            beam_total_m = (2 * self.width) / 1000.0
-            col_total_m = (2 * self.length) / 1000.0
-            return (beam_total_m * self.beam_section.weight_per_m
-                    + col_total_m * self.column_section.weight_per_m)
+            # 벽체 패널: 보 2개(위·아래, 스팬=길이 방향) + 기둥 2개(양쪽, 층고=폭 방향)
+            beam_total_m = (2 * self.length) / 1000.0  # 위·아래 보 = 2 × 가로 스팬
+            col_total_m = (2 * self.width) / 1000.0    # 양쪽 기둥 = 2 × 층고
+            frame_w = (beam_total_m * self.beam_section.weight_per_m
+                       + col_total_m * self.column_section.weight_per_m)
+            return frame_w + self.extra_weight_kg
         # 플로어 패널: 보 4개(둘레)
         beam_total_m = (2 * (self.width + self.length)) / 1000.0
-        return beam_total_m * self.beam_section.weight_per_m
+        return beam_total_m * self.beam_section.weight_per_m + self.extra_weight_kg
 
 
 @dataclass(frozen=True)
@@ -116,29 +120,14 @@ class Truck:
 
 @dataclass(frozen=True)
 class SpacingParams:
-    """패널 적재 간격 표준값 (mm).
+    """패널 적재 간격 (mm).
 
-    근거:
-      - PCI MNL-122 §6: 운송·하역 시 더니지 권장
-      - KOSHA 화물 결박 가이드: 결박 작업 공간 확보
-      - 본 자료: references/05_PCI_운송더니지_가이드.md
+    panel_gap_mm       — 패널 사이 간격 (같은 열 내, 적층 층 사이 모두 동일 적용)
+    truck_edge_clearance_mm — 트럭 양끝 결박 여유
     """
 
     panel_gap_mm: float = 100.0
     truck_edge_clearance_mm: float = 200.0
-    dunnage_thickness_mm: float = 100.0
-
-
-@dataclass(frozen=True)
-class DunnageSpec:
-    """더니지 사양 — 무게 산출용.
-
-    근거: references/07_목재더니지_밀도_무게.md
-    """
-
-    density_kg_per_m3: float = 500.0      # 소나무 건조 평균
-    cross_section_mm: float = 100.0       # 100×100mm 각재
-    pieces_per_layer: int = 3             # 양 끝 + 중간
 
 
 @dataclass(frozen=True)

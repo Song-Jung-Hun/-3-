@@ -336,8 +336,7 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
     fig = go.Figure()
     _truck_outline_rear(fig, truck)
     veh_h = truck.vehicle_height_offset
-    dun = sp.dunnage_thickness_mm
-    gap = sp.panel_gap_mm
+    gap = sp.panel_gap_mm   # 층간 간격도 동일 gap 사용 (받침목 없음)
     edge = sp.truck_edge_clearance_mm
 
     if trip.kind == "module":
@@ -392,23 +391,8 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 text=f"<b>{layer + 1}단{pos}</b> · {in_layer}매",
                 showarrow=False, font=dict(size=9, color="white"),
             )
-            if layer < used_layers - 1:
-                dy0 = cursor_y + sample.thickness
-                dy1 = dy0 + dun
-                fig.add_shape(
-                    type="rect",
-                    x0=cx, y0=dy0,
-                    x1=cx + sample.width, y1=dy1,
-                    line=dict(color="#5d2906", width=2),
-                    fillcolor="#8b4513",
-                )
-                fig.add_annotation(
-                    x=cx + sample.width / 2, y=(dy0 + dy1) / 2,
-                    text=f"━ 받침목 {int(dun)}mm ━",
-                    showarrow=False, font=dict(size=9, color="white"),
-                )
-            cursor_y += sample.thickness + dun
-        total_h = used_layers * sample.thickness + (used_layers - 1) * dun
+            cursor_y += sample.thickness + gap   # 층간 gap (받침목 없음)
+        total_h = used_layers * sample.thickness + (used_layers - 1) * gap
         fig.add_annotation(
             x=truck.max_width / 2, y=truck.max_height + 250,
             text=(
@@ -485,24 +469,8 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 text=f"<b>{layer + 1}단{pos}</b> · {in_layer}매",
                 showarrow=False, font=dict(size=9, color="white"),
             )
-            if layer < used_layers - 1:
-                dy0 = cursor_y + sample.thickness
-                dy1 = dy0 + dun
-                fig.add_shape(
-                    type="rect",
-                    x0=cx, y0=dy0,
-                    x1=cx + sample.width, y1=dy1,
-                    line=dict(color="#5d2906", width=2),
-                    fillcolor="#8b4513",
-                )
-                fig.add_annotation(
-                    x=cx + sample.width / 2, y=(dy0 + dy1) / 2,
-                    text=f"━ 받침목 {int(dun)}mm ━",
-                    showarrow=False,
-                    font=dict(size=9, color="white"),
-                )
-            cursor_y += sample.thickness + dun
-        total_h = used_layers * sample.thickness + (used_layers - 1) * dun
+            cursor_y += sample.thickness + gap   # 층간 gap (받침목 없음)
+        total_h = used_layers * sample.thickness + (used_layers - 1) * gap
         fig.add_annotation(
             x=truck.max_width / 2, y=truck.max_height + 250,
             text=(
@@ -629,7 +597,6 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
     veh_h = truck.vehicle_height_offset
     edge = sp.truck_edge_clearance_mm
     gap = sp.panel_gap_mm
-    dun = sp.dunnage_thickness_mm
 
     if not trip.items:
         pass  # 트럭만
@@ -674,16 +641,7 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 ):
                     fig.add_trace(tr)
                 cursor_x += sample.length + gap
-            if layer < used_layers - 1:
-                for tr in _box_mesh(
-                    edge, cy, cursor_z + sample.thickness,
-                    truck.max_length - edge,
-                    cy + sample.width,
-                    cursor_z + sample.thickness + dun,
-                    "#8b4513", 0.85, f"받침목 {int(dun)}mm", show_edges=False,
-                ):
-                    fig.add_trace(tr)
-            cursor_z += sample.thickness + dun
+            cursor_z += sample.thickness + gap   # 층간 gap (받침목 없음)
 
     elif isinstance(trip.items[0], Panel) and trip.items[0].kind == "lshape":
         # L자 패널 — 눕혀서 나란히, 바닥 박스 + 벽 박스
@@ -736,19 +694,7 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 ):
                     fig.add_trace(tr)
                 cursor_x += sample.length + gap
-            # 다음 단과의 받침목 (얇은 갈색 박스)
-            if layer < used_layers - 1:
-                for tr in _box_mesh(
-                    edge, cy, cursor_z + sample.thickness,
-                    truck.max_length - edge,
-                    cy + sample.width,
-                    cursor_z + sample.thickness + dun,
-                    "#8b4513", 0.85,
-                    f"받침목 {int(dun)}mm",
-                    show_edges=False,
-                ):
-                    fig.add_trace(tr)
-            cursor_z += sample.thickness + dun
+            cursor_z += sample.thickness + gap   # 층간 gap (받침목 없음)
 
     fig.update_layout(
         scene=dict(
