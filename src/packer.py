@@ -1,12 +1,16 @@
 """모듈·패널 → 운송 회차 산정.
 
-알고리즘: FFD (First Fit Decreasing) 빈 패킹
-  - 모든 항목을 크기(길이·무게) 내림차순 정렬
+모듈 적재 규칙:
+  - 1 트럭 = 1 모듈 (LH §2.7.1 표준 — 모듈은 트럭 한 대에 한 개씩)
+  - 해당 모듈을 실을 수 있는 트럭 중 용량이 가장 큰 트럭을 자동 배정
+
+패널 적재 알고리즘: FFD (First Fit Decreasing) 빈 패킹
+  - 모든 패널을 크기(무게·두께·길이) 내림차순 정렬
   - 기존 트럭 빈 공간에 먼저 채우고, 안 되면 새 트럭 오픈
-  - 다른 사양 모듈/패널도 같은 트럭에 혼적 가능 → 트럭 대수 최소화
+  - 다른 사양 패널도 같은 트럭에 혼적 가능 → 트럭 대수 최소화
 
 적재 방향:
-  - 모듈: 길이 방향으로 나란히 (적층 X)
+  - 모듈: 1 트럭 = 1 모듈 (혼적 없음)
   - 플로어 패널: 눕혀서 적층
   - 벽체 패널: A-frame에 두께 방향으로 세워서
   - L자 패널: 눕혀서 나란히 (적층 X, 벽 부분이 위로 솟음)
@@ -215,7 +219,11 @@ def _pack_modules(
     spacing: SpacingParams,
     start_trip_no: int = 1,
 ) -> tuple[list[Trip], list[tuple[Module, str]]]:
-    """FFD 빈 패킹 — 길이 내림차순 정렬, 다른 사양 모듈도 같은 트럭에 혼적."""
+    """1 트럭 = 1 모듈 (LH §2.7.1 표준).
+
+    각 모듈을 실을 수 있는 트럭 중 용량이 가장 큰 트럭을 배정한다.
+    모듈끼리 혼적하지 않으므로 모듈 수 = 회차 수.
+    """
     if not modules:
         return [], []
 
@@ -223,74 +231,29 @@ def _pack_modules(
     if not compat:
         return [], [(m, "모듈 운송 가능 트럭 없음 (lowbed/extendable 필요)") for m in modules]
 
-    # 각 모듈이 탈 수 있는 트럭 목록 파악
     blocked: list[tuple[Module, str]] = []
-    valid: list[tuple[Module, list[Truck]]] = []
-    for m in modules:
-        ok = [tr for tr in compat
-              if can_carry(m, tr, road).ok
-              and m.width <= tr.max_width
-              and m.height + tr.vehicle_height_offset <= tr.max_height]
-        if ok:
-            valid.append((m, ok))
-        else:
-            blocked.append((m, "모듈 규격이 모든 트럭/도로 한도 초과"))
-
-    if not valid:
-        return [], blocked
-
-    # 길이 내림차순 정렬 (FFD 핵심)
-    valid.sort(key=lambda x: x[0].length, reverse=True)
-
-    # bin: 트럭 1대 진행 중 적재 상태
-    bins: list[dict] = []
+    trips: list[Trip] = []
     next_no = start_trip_no
 
-    for m, ok_trucks in valid:
-        placed = False
+    for m in modules:
+        ok_trucks = [
+            tr for tr in compat
+            if can_carry(m, tr, road).ok
+            and m.width <= tr.max_width
+            and m.height + tr.vehicle_height_offset <= tr.max_height
+            and m.length <= tr.max_length - 2 * spacing.truck_edge_clearance_mm
+        ]
+        if not ok_trucks:
+            blocked.append((m, "모듈 규격이 모든 트럭/도로 한도 초과"))
+            continue
 
-        for b in bins:
-            if b["truck"] not in ok_trucks:
-                continue
-            tr = b["truck"]
-            usable = tr.max_length - 2 * spacing.truck_edge_clearance_mm
-            # 첫 모듈이면 gap 없음, 이후는 gap 추가
-            gap = spacing.panel_gap_mm if b["items"] else 0.0
-            if b["used_length"] + gap + m.length > usable:
-                continue
-            if b["total_weight"] + m.weight > tr.max_weight:
-                continue
-            b["items"].append(m)
-            b["used_length"] += gap + m.length
-            b["total_weight"] += m.weight
-            b["wide"] = b["wide"] or m.is_wide()
-            placed = True
-            break
-
-        if not placed:
-            # 새 트럭 오픈
-            ok_for_new = [tr for tr in ok_trucks
-                          if m.length <= tr.max_length - 2 * spacing.truck_edge_clearance_mm]
-            if not ok_for_new:
-                blocked.append((m, f"모듈 길이 {m.length:.0f}mm가 모든 트럭 유효 길이 초과"))
-                continue
-            best = _best_truck(ok_for_new)
-            bins.append({
-                "truck": best,
-                "items": [m],
-                "used_length": m.length,
-                "total_weight": m.weight,
-                "wide": m.is_wide(),
-            })
-
-    trips: list[Trip] = []
-    for b in bins:
+        best = _best_truck(ok_trucks)
         trips.append(Trip(
             trip_no=next_no,
-            truck=b["truck"],
-            items=b["items"],
-            wide_check=b["wide"],
-            panels_per_row=len(b["items"]),
+            truck=best,
+            items=[m],
+            wide_check=m.is_wide(),
+            panels_per_row=1,
             n_layers=1,
         ))
         next_no += 1
