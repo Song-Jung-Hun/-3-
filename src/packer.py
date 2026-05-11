@@ -116,7 +116,8 @@ def _floor_panel_compatible_trucks(trucks: list[Truck]) -> list[Truck]:
 
 
 def _wall_panel_compatible_trucks(trucks: list[Truck]) -> list[Truck]:
-    return [t for t in trucks if t.truck_type == "aframe"]
+    # 벽체 패널 눕혀서 적층 운송 → 플로어 패널과 동일 차종
+    return [t for t in trucks if t.truck_type in ("lowbed", "extendable")]
 
 
 def _lshape_compatible_trucks(trucks: list[Truck]) -> list[Truck]:
@@ -379,7 +380,7 @@ def _pack_floor_panels(
 
 
 # ---------------------------------------------------------------------------
-# 벽체 패널 — FFD (두께 내림차순, A-frame 혼적 허용)
+# 벽체 패널 — FFD (무게 내림차순, 눕혀서 적층 — 플로어 패널과 동일 방식)
 # ---------------------------------------------------------------------------
 
 def _pack_wall_panels(
@@ -390,30 +391,28 @@ def _pack_wall_panels(
     ds: DunnageSpec,
     start_trip_no: int,
 ) -> tuple[list[Trip], list[tuple[Panel, str]]]:
-    """FFD 빈 패킹 — 두꺼운 순, A-frame에 세워서 혼적."""
+    """FFD 빈 패킹 — 무거운 순, 눕혀서 적층 (플로어 패널과 동일 방식)."""
     if not panels:
         return [], []
     compat = _wall_panel_compatible_trucks(trucks)
     if not compat:
-        return [], [(p, "벽체 패널 운송 가능 A-frame 트레일러 없음") for p in panels]
+        return [], [(p, "벽체 패널 운송 가능 트럭 없음 (lowbed/extendable 필요)") for p in panels]
 
     blocked: list[tuple[Panel, str]] = []
     valid: list[tuple[Panel, list[Truck]]] = []
     for p in panels:
         ok = [tr for tr in compat
-              if can_carry(p, tr, road).ok
-              and p.length <= tr.max_length - 2 * sp.truck_edge_clearance_mm
-              and p.width + tr.vehicle_height_offset <= tr.max_height]
+              if can_carry(p, tr, road).ok and p.width <= tr.max_width]
         if ok:
             valid.append((p, ok))
         else:
-            blocked.append((p, "A-frame 적재 불가 (크기/도로 초과)"))
+            blocked.append((p, "운송 가능 트럭 없음"))
 
     if not valid:
         return [], blocked
 
-    # 두꺼운 순 정렬 (두꺼운 패널 = 폭 방향 더 차지)
-    valid.sort(key=lambda x: x[0].thickness, reverse=True)
+    # 무거운 순 정렬
+    valid.sort(key=lambda x: x[0].weight, reverse=True)
 
     bins: list[dict] = []
     next_no = start_trip_no
@@ -425,30 +424,44 @@ def _pack_wall_panels(
             if b["truck"] not in ok_trucks:
                 continue
             tr = b["truck"]
-            usable_w = tr.max_width - 2 * sp.truck_edge_clearance_mm
-            gap = sp.panel_gap_mm if b["items"] else 0.0
-            if b["used_width"] + gap + p.thickness > usable_w:
+            usable_len = tr.max_length - 2 * sp.truck_edge_clearance_mm
+            if p.length > usable_len:
                 continue
-            if b["total_weight"] + p.weight > tr.max_weight:
+            ppr = max(b["panels_per_row"], 1)
+            new_n = len(b["items"]) + 1
+            new_layers = math.ceil(new_n / ppr)
+            inner_h = tr.max_height - tr.vehicle_height_offset
+            max_thick = max(pi.thickness for pi in b["items"] + [p])
+            stack_h = new_layers * max_thick + max(new_layers - 1, 0) * sp.dunnage_thickness_mm
+            if stack_h > inner_h:
+                continue
+            layer_dun = _dunnage_weight_per_layer(tr.max_width, ds)
+            new_dun = max(new_layers - 1, 0) * layer_dun
+            if b["total_cargo"] + p.weight + new_dun > tr.max_weight:
                 continue
             b["items"].append(p)
-            b["used_width"] += gap + p.thickness
-            b["total_weight"] += p.weight
+            b["total_cargo"] += p.weight
+            b["dunnage_weight"] = new_dun
+            b["n_layers"] = new_layers
             placed = True
             break
 
         if not placed:
             ok_for_new = [tr for tr in ok_trucks
-                          if p.thickness <= tr.max_width - 2 * sp.truck_edge_clearance_mm]
+                          if p.length <= tr.max_length - 2 * sp.truck_edge_clearance_mm]
             if not ok_for_new:
-                blocked.append((p, "벽체 패널 두께가 트럭 폭 초과"))
+                blocked.append((p, "벽체 패널 길이가 트럭 유효 길이 초과"))
                 continue
             best = _closest_fit_truck(ok_for_new, p.length, p.weight)
+            _, ppr, _ = _max_floor_panels_per_truck(p, best, sp, ds)
+            ppr = max(ppr, 1)
             bins.append({
                 "truck": best,
                 "items": [p],
-                "used_width": p.thickness,
-                "total_weight": p.weight,
+                "total_cargo": p.weight,
+                "dunnage_weight": 0.0,
+                "panels_per_row": ppr,
+                "n_layers": 1,
             })
 
     trips: list[Trip] = []
@@ -457,9 +470,9 @@ def _pack_wall_panels(
             trip_no=next_no,
             truck=b["truck"],
             items=b["items"],
-            panels_per_row=len(b["items"]),
-            n_layers=1,
-            dunnage_weight=0.0,
+            panels_per_row=b["panels_per_row"],
+            n_layers=b["n_layers"],
+            dunnage_weight=b["dunnage_weight"],
         ))
         next_no += 1
 
@@ -575,8 +588,8 @@ def recheck_trip_with_truck(
             return False, f"모듈은 lowbed 또는 extendable 트럭에만 적재 가능 (선택: {new_truck.truck_type})", None
     else:
         if isinstance(sample, Panel) and sample.kind == "wall":
-            if new_truck.truck_type != "aframe":
-                return False, f"벽체 패널은 A-frame 트럭에만 적재 가능 (선택: {new_truck.truck_type})", None
+            if new_truck.truck_type not in ("lowbed", "extendable"):
+                return False, f"벽체 패널은 lowbed/extendable 트럭에만 적재 가능 (선택: {new_truck.truck_type})", None
         elif isinstance(sample, Panel) and sample.kind == "lshape":
             if new_truck.truck_type not in ("lowbed", "extendable"):
                 return False, f"L자 패널은 lowbed/extendable 트럭만 적재 가능 (선택: {new_truck.truck_type})", None
@@ -611,18 +624,20 @@ def recheck_trip_with_truck(
         )
         return True, "OK", new_trip
 
-    # 4) 벽체 패널
+    # 4) 벽체 패널 (눕혀서 적층 — 플로어 패널과 동일 검사)
     if isinstance(sample, Panel) and sample.kind == "wall":
-        max_n, _ = _max_wall_panels_per_aframe(sample, new_truck, spacing, dunnage)
+        max_n, ppr, nl = _max_floor_panels_per_truck(sample, new_truck, spacing, dunnage)
         if n > max_n:
-            return False, f"A-frame에 {n}매 적재 불가 (최대 {max_n}매)", None
+            return False, f"새 트럭에 {n}매 적재 불가 (부피·중량 최대 {max_n}매)", None
+        used_layers = math.ceil(n / ppr) if ppr > 0 else 1
+        layer_dun = _dunnage_weight_per_layer(new_truck.max_width, dunnage)
         new_trip = Trip(
             trip_no=trip.trip_no,
             truck=new_truck,
             items=list(trip.items),
-            panels_per_row=n,
-            n_layers=1,
-            dunnage_weight=0.0,
+            panels_per_row=ppr,
+            n_layers=used_layers,
+            dunnage_weight=max(used_layers - 1, 0) * layer_dun,
         )
         return True, "OK", new_trip
 

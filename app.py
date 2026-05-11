@@ -131,9 +131,9 @@ with st.sidebar:
         df_trucks = pd.DataFrame(rows)
         st.dataframe(df_trucks, hide_index=True, width="stretch")
         st.caption(
-            "**lowbed** = 저상 트레일러 (모듈·플로어·L자 패널) / "
-            "**extendable** = 확장형 광폭 트레일러 (광폭 모듈·L자 패널, 광로 전용) / "
-            "**aframe** = A-frame 트레일러 (벽체 패널 세워서). "
+            "**lowbed** = 저상 트레일러 (모듈·플로어·벽체·L자 패널) / "
+            "**extendable** = 확장형 광폭 트레일러 (광폭 모듈·각종 패널, 광로 전용) / "
+            "**aframe** = A-frame 트레일러 (PC 벽체 패널 세움 운송 시 별도 사용). "
             "차량 길이/폭/높이가 도로 한도를 넘으면 그 도로 진입 불가. "
             "출처: LH §2.7.1, 한국특장차, PCI MNL-122."
         )
@@ -437,7 +437,7 @@ for trip in result.trips:
     if trip.kind == "panel":
         sample = trip.items[0] if trip.items else None
         if sample and sample.kind == "wall":
-            extra = f"세움 {trip.panels_per_row}매 (폭방향)"
+            extra = f"{trip.panels_per_row}열 × {trip.n_layers}단 (눕혀서 적층)"
         elif sample and sample.kind == "lshape":
             extra = f"L자 {trip.panels_per_row}매 나란히 (적층 불가)"
         else:
@@ -547,8 +547,8 @@ if trip_options:
         )
     elif sel_trip.items and sel_trip.items[0].kind == "wall":
         st.info(
-            "🟧 **벽체 패널 회차 (A-frame 트레일러)** — 패널을 **세워서 폭 방향에 두께 N매 줄짓기**. "
-            "PCI MNL-122 표준. Top View와 Rear View 모두 세운 자세로 표시."
+            "🟧 **벽체 패널 회차** — 패널을 **눕혀서 적층**. "
+            "플로어 패널과 동일하게 저상/광폭 트레일러에 길이 방향으로 나란히, 위로 N단 쌓아서 운송."
         )
     elif sel_trip.items and sel_trip.items[0].kind == "lshape":
         st.info(
@@ -629,11 +629,8 @@ with st.expander("🔧 수동 배치 입력", expanded=False):
             default=list(pool.keys())[:1] if pool else [],
         )
 
-        # 추천 트럭 안내
-        if cargo_kind == "벽체 패널":
-            recommend = "A-frame 트레일러"
-        else:
-            recommend = "저상 또는 확장형 광폭"
+        # 추천 트럭 안내 (벽체 패널도 눕혀서 운송 → 저상/광폭)
+        recommend = "저상 또는 확장형 광폭"
         st.caption(f"💡 추천 트럭: **{recommend}**")
 
         manual_truck_name = st.selectbox(
