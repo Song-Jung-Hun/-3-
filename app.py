@@ -843,28 +843,34 @@ st.caption(
     "화면에서 확인하거나 CSV로 내려받을 수 있습니다."
 )
 
-# ── 운송 단가 입력 ──────────────────────────────────────────────────────────
+# ── 운송 단가 입력 (B방식: km당 단가 × 왕복 거리 × 회차 수) ─────────────────
 with st.expander("💰 운송 단가 설정 (경제성 계산용)", expanded=True):
     st.caption(
-        "모듈러 건축 특수 트레일러 운임은 국토부 고시 대상이 아니며 업체 협의가격으로 결정됩니다. "
-        "아래 기본값은 업계 블로그·견적 사례 기반 참고치(회차당 100~250만 원)의 중간값입니다. "
-        "실제 견적으로 교체해서 사용하세요."
+        "**계산식: km당 단가 × 왕복 거리 × 회차 수**  \n"
+        "거리가 달라지면 비용이 자동으로 반영됩니다. "
+        "아래 기본값은 한국 특수 트레일러 실무 참고치입니다. 실제 견적으로 교체해서 사용하세요."
     )
     cost_col1, cost_col2 = st.columns(2)
     with cost_col1:
-        cost_lowbed = st.number_input(
-            "저상 트레일러 단가 (원/회차)",
-            min_value=0, max_value=10_000_000, value=1_500_000, step=100_000,
-            help="25t급 저상 트레일러. 참고치 100~250만 원/회차.",
+        rate_lowbed = st.number_input(
+            "저상 트레일러 단가 (원/km)",
+            min_value=0, max_value=100_000, value=3_500, step=100,
+            help="25t급 저상 트레일러. 실무 참고치 3,000~4,000원/km.",
             format="%d",
         )
     with cost_col2:
-        cost_extendable = st.number_input(
-            "광폭 트레일러 단가 (원/회차)",
-            min_value=0, max_value=10_000_000, value=2_000_000, step=100_000,
-            help="확장형 광폭 트레일러. 광폭 운행 허가비 포함. 저상보다 약 30~40% 높음.",
+        rate_extendable = st.number_input(
+            "광폭 트레일러 단가 (원/km)",
+            min_value=0, max_value=100_000, value=5_000, step=100,
+            help="확장형 광폭 트레일러. 광폭 운행 허가비 포함. 실무 참고치 4,500~6,000원/km.",
             format="%d",
         )
+    round_trip_km = distance_km * 2
+    st.caption(
+        f"현재 왕복 거리 **{round_trip_km:.0f}km** 기준  ·  "
+        f"저상 1회차 = **{int(rate_lowbed * round_trip_km):,}원**  ·  "
+        f"광폭 1회차 = **{int(rate_extendable * round_trip_km):,}원**"
+    )
 
 # ── ① 입력 아이템 요약표 ────────────────────────────────────────────────────
 st.markdown("### ① 투입 아이템 목록")
@@ -919,7 +925,8 @@ st.markdown("### ② 회차별 적재 결과")
 trip_summary_rows = []
 for trip in result.trips:
     truck_type = trip.truck.truck_type
-    unit_cost = cost_extendable if truck_type == "extendable" else cost_lowbed
+    rate = rate_extendable if truck_type == "extendable" else rate_lowbed
+    trip_cost = int(rate * round_trip_km)   # 왕복 거리 × km당 단가
     item_names = ", ".join(
         {i.name.rsplit("-", 1)[0] for i in trip.items}
     )
@@ -934,7 +941,7 @@ for trip in result.trips:
         "중량 적재율(%)": round(trip.weight_utilization, 1),
         "길이 적재율(%)": round(trip.length_utilization, 1),
         "결정인자": "중량↑" if trip.weight_utilization >= trip.length_utilization else "길이↑",
-        "운송 단가(원)": unit_cost,
+        "회차 운송비(원)": trip_cost,
         "광폭검토": "필요" if trip.wide_check else "-",
     })
 
@@ -945,43 +952,44 @@ if not df_trip_summary.empty:
 # ── ③ 경제성 요약 ──────────────────────────────────────────────────────────
 st.markdown("### ③ 경제성 요약")
 
-total_cost = 0
-for trip in result.trips:
-    unit_cost = cost_extendable if trip.truck.truck_type == "extendable" else cost_lowbed
-    total_cost += unit_cost
-
-lowbed_trips  = sum(1 for t in result.trips if t.truck.truck_type != "extendable")
+lowbed_trips     = sum(1 for t in result.trips if t.truck.truck_type != "extendable")
 extendable_trips = sum(1 for t in result.trips if t.truck.truck_type == "extendable")
 total_cargo_weight = sum(t.cargo_weight for t in result.trips)
-total_round_km = result.total_trips * distance_km * 2
+total_round_km   = result.total_trips * round_trip_km
+
+cost_lowbed_total     = int(rate_lowbed     * round_trip_km * lowbed_trips)
+cost_extendable_total = int(rate_extendable * round_trip_km * extendable_trips)
+total_cost = cost_lowbed_total + cost_extendable_total
 
 econ_col1, econ_col2, econ_col3, econ_col4, econ_col5 = st.columns(5)
 econ_col1.metric("총 회차", f"{result.total_trips} 회")
 econ_col2.metric("저상 트레일러", f"{lowbed_trips} 회")
 econ_col3.metric("광폭 트레일러", f"{extendable_trips} 회")
 econ_col4.metric("총 운송 거리", f"{total_round_km:,.0f} km")
-econ_col5.metric("예상 운송비 합계", f"{total_cost:,.0f} 원")
+econ_col5.metric("예상 운송비 합계", f"{total_cost:,} 원")
 
 econ_rows = [
-    {"항목": "도로 등급", "값": road.name},
-    {"항목": "편도 거리", "값": f"{distance_km:.0f} km"},
-    {"항목": "왕복 거리 (1회차)", "값": f"{distance_km * 2:.0f} km"},
-    {"항목": "총 회차", "값": f"{result.total_trips} 회"},
-    {"항목": "  └ 모듈 회차", "값": f"{result.module_trips} 회"},
-    {"항목": "  └ 패널 회차", "값": f"{result.panel_trips} 회"},
-    {"항목": "  └ 저상 트레일러", "값": f"{lowbed_trips} 회"},
-    {"항목": "  └ 광폭 트레일러", "값": f"{extendable_trips} 회"},
-    {"항목": "총 왕복 운송 거리", "값": f"{total_round_km:,.0f} km"},
-    {"항목": "총 화물 중량", "값": f"{total_cargo_weight:,.0f} kg"},
-    {"항목": "평균 적재율", "값": f"{result.avg_utilization:.1f} %"},
-    {"항목": "저상 트레일러 단가", "값": f"{cost_lowbed:,} 원/회차"},
-    {"항목": "광폭 트레일러 단가", "값": f"{cost_extendable:,} 원/회차"},
-    {"항목": "예상 운송비 합계", "값": f"{total_cost:,} 원"},
+    {"항목": "도로 등급",              "값": road.name},
+    {"항목": "편도 거리",              "값": f"{distance_km:.0f} km"},
+    {"항목": "왕복 거리 (1회차)",      "값": f"{round_trip_km:.0f} km"},
+    {"항목": "총 회차",               "값": f"{result.total_trips} 회"},
+    {"항목": "  └ 모듈 회차",          "값": f"{result.module_trips} 회"},
+    {"항목": "  └ 패널 회차",          "값": f"{result.panel_trips} 회"},
+    {"항목": "  └ 저상 트레일러",       "값": f"{lowbed_trips} 회"},
+    {"항목": "  └ 광폭 트레일러",       "값": f"{extendable_trips} 회"},
+    {"항목": "총 왕복 운송 거리",       "값": f"{total_round_km:,.0f} km"},
+    {"항목": "총 화물 중량",            "값": f"{total_cargo_weight:,.0f} kg"},
+    {"항목": "평균 적재율",             "값": f"{result.avg_utilization:.1f} %"},
+    {"항목": "저상 트레일러 단가",       "값": f"{rate_lowbed:,} 원/km"},
+    {"항목": "광폭 트레일러 단가",       "값": f"{rate_extendable:,} 원/km"},
+    {"항목": "저상 운송비 소계",         "값": f"{cost_lowbed_total:,} 원  ({lowbed_trips}회 × {round_trip_km:.0f}km × {rate_lowbed:,}원/km)"},
+    {"항목": "광폭 운송비 소계",         "값": f"{cost_extendable_total:,} 원  ({extendable_trips}회 × {round_trip_km:.0f}km × {rate_extendable:,}원/km)"},
+    {"항목": "예상 운송비 합계",         "값": f"{total_cost:,} 원"},
 ]
 df_econ = pd.DataFrame(econ_rows)
 st.dataframe(df_econ, use_container_width=True, hide_index=True)
 st.caption(
-    "⚠ 운송비는 업계 참고치(회차당 100~250만 원) 기반 추정값입니다. "
+    "⚠ 운송비는 한국 특수 트레일러 실무 참고치(3,000~6,000원/km) 기반 추정값입니다. "
     "실제 견적과 다를 수 있으며, 광폭 허가비·에스코트비·야간 운행비는 별도입니다."
 )
 
