@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
+from streamlit_plotly_events import plotly_events
 
 from src.models import (
     Module, Panel, Section, SpacingParams,
@@ -167,6 +169,89 @@ LSHAPE_DEFAULTS = [
     ("기타 L자", 3000, 6000, 200, 2800, "H 200x100x5.5x8", "SHS 150x150x6", 0),
 ]
 
+# 비내력벽 종류 정의 (모듈·패널 공통)
+_NB_TYPES = {
+    "내부 비내력벽": {"unit_weight": 30.0, "color": "rgba(76,114,176,0.80)"},
+    "외부 비내력벽": {"unit_weight": 55.0, "color": "rgba(221,132,82,0.80)"},
+}
+_NB_FACE_NAMES = ["전면", "후면", "좌면", "우면"]  # curveNumber 0~3 과 1:1 대응
+
+
+def _make_module_box_fig(
+    w_mm: float, l_mm: float, h_mm: float,
+    face_types: dict, selected_face: str | None,
+) -> go.Figure:
+    """모듈 직육면체 3D 시각화.
+
+    - curveNumber 0=전면 1=후면 2=좌면 3=우면 (클릭 대상)
+    - curveNumber 4=바닥 5=천장 (회색, 클릭 대상 아님)
+    - 선택된 면은 테두리(scatter3d 선)로 강조
+    """
+    w, l, h = w_mm / 1000.0, l_mm / 1000.0, h_mm / 1000.0
+
+    # face_name → (xs, ys, zs) — 시계 반대 방향 순서로 quad 정의
+    face_geom = {
+        "전면": ([0, w, w, 0], [0, 0, 0, 0], [0, 0, h, h]),
+        "후면": ([0, w, w, 0], [l, l, l, l], [0, 0, h, h]),
+        "좌면": ([0, 0, 0, 0], [0, l, l, 0], [0, 0, h, h]),
+        "우면": ([w, w, w, w], [0, l, l, 0], [0, 0, h, h]),
+    }
+
+    fig = go.Figure()
+
+    # 4 벽면 (클릭 가능)
+    for face_name, (xs, ys, zs) in face_geom.items():
+        ftype = face_types.get(face_name, "내부 비내력벽")
+        color = _NB_TYPES[ftype]["color"]
+        is_sel = (face_name == selected_face)
+        fig.add_trace(go.Mesh3d(
+            x=xs, y=ys, z=zs,
+            i=[0, 0], j=[1, 2], k=[2, 3],
+            color=color,
+            opacity=1.0 if is_sel else 0.75,
+            name=face_name,
+            hovertemplate=f"<b>{face_name}</b><br>{ftype}<br><i>클릭해서 변경</i><extra></extra>",
+            flatshading=True,
+        ))
+        # 선택된 면 — 외곽선 강조
+        if is_sel:
+            edge_x = xs + [xs[0]]
+            edge_y = ys + [ys[0]]
+            edge_z = zs + [zs[0]]
+            fig.add_trace(go.Scatter3d(
+                x=edge_x, y=edge_y, z=edge_z,
+                mode="lines",
+                line=dict(color="red", width=6),
+                name=f"{face_name}_sel",
+                hoverinfo="skip",
+                showlegend=False,
+            ))
+
+    # 바닥·천장 (회색, curveNumber 4·5)
+    for z_val, label in [(0.0, "바닥"), (h, "천장")]:
+        fig.add_trace(go.Mesh3d(
+            x=[0, w, w, 0], y=[0, 0, l, l], z=[z_val] * 4,
+            i=[0, 0], j=[1, 2], k=[2, 3],
+            color="rgba(160,160,160,0.40)",
+            opacity=0.4,
+            name=label,
+            hovertemplate=f"<b>{label}</b><extra></extra>",
+        ))
+
+    fig.update_layout(
+        height=300,
+        margin=dict(l=0, r=0, t=10, b=0),
+        showlegend=False,
+        scene=dict(
+            aspectmode="data",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
 
 def _section_select(label: str, default_name: str, key: str) -> Section:
     """단면 선택 selectbox + 단위중량 표시."""
@@ -182,23 +267,102 @@ def _section_select(label: str, default_name: str, key: str) -> Section:
 
 def _module_form(idx: int) -> list[Module]:
     d = MODULE_DEFAULTS[idx] if idx < len(MODULE_DEFAULTS) else MODULE_DEFAULTS[-1]
-    name = st.text_input("이름", value=d[0], key=f"mname_{idx}")
-    width = st.number_input("폭 (mm)", 1000, 5000, d[1], 100, key=f"mw_{idx}")
-    length = st.number_input("길이 (mm)", 2000, 20000, d[2], 100, key=f"ml_{idx}")
-    height = st.number_input("높이 (mm)", 1500, 5000, d[3], 100, key=f"mh_{idx}")
+    name   = st.text_input("이름",          value=d[0], key=f"mname_{idx}")
+    width  = st.number_input("폭 (mm)",     1000, 5000,  d[1], 100, key=f"mw_{idx}")
+    length = st.number_input("길이 (mm)",   2000, 20000, d[2], 100, key=f"ml_{idx}")
+    height = st.number_input("높이 (mm)",   1500, 5000,  d[3], 100, key=f"mh_{idx}")
 
-    col_sec = _section_select("기둥", d[4], f"mcol_{idx}")
-    beam_sec = _section_select("보", d[5], f"mbeam_{idx}")
+    col_sec  = _section_select("기둥", d[4], f"mcol_{idx}")
+    beam_sec = _section_select("보",   d[5], f"mbeam_{idx}")
 
-    count = st.number_input("운송 수량 (EA)", 0, 500, d[6], 1, key=f"mc_{idx}")
+    # ── 비내력벽 4면 설정 ──────────────────────────────────────────────────
+    st.markdown("**🧱 비내력벽 설정 (4면) — 직육면체 면을 클릭해서 종류 선택**")
 
-    # 자동 무게 표시
-    sample = Module(
+    face_key = f"mod_faces_{idx}"   # {면이름 → 종류} dict
+    sel_key  = f"mod_sel_{idx}"     # 현재 선택된 면 이름
+
+    if face_key not in st.session_state:
+        st.session_state[face_key] = {f: "내부 비내력벽" for f in _NB_FACE_NAMES}
+    if sel_key not in st.session_state:
+        st.session_state[sel_key] = None
+
+    box_col, ctrl_col = st.columns([1.6, 1])
+
+    with box_col:
+        face_fig = _make_module_box_fig(
+            float(width), float(length), float(height),
+            st.session_state[face_key],
+            st.session_state[sel_key],
+        )
+        clicked = plotly_events(face_fig, click_event=True,
+                                key=f"mod_box_{idx}", override_height=310)
+        # 클릭된 면 업데이트 (curveNumber 0~3 만 벽면)
+        if clicked:
+            cn = clicked[0].get("curveNumber", -1)
+            if 0 <= cn < 4:
+                new_sel = _NB_FACE_NAMES[cn]
+                if st.session_state[sel_key] != new_sel:
+                    st.session_state[sel_key] = new_sel
+                    st.rerun()
+
+    with ctrl_col:
+        sel_face = st.session_state[sel_key]
+
+        # 색상 범례
+        st.caption("🔵 내부 비내력벽 (30 kg/m²)　🟠 외부 비내력벽 (55 kg/m²)")
+
+        if sel_face:
+            st.markdown(f"**✏️ {sel_face} 편집 중**")
+            cur = st.session_state[face_key][sel_face]
+            new_type = st.radio(
+                "비내력벽 종류",
+                list(_NB_TYPES.keys()),
+                index=list(_NB_TYPES.keys()).index(cur),
+                key=f"nb_{idx}_{sel_face}",
+                horizontal=True,
+            )
+            if new_type != cur:
+                st.session_state[face_key][sel_face] = new_type
+                st.rerun()
+            st.markdown("---")
+
+        # 전체 면 현황 요약
+        for fn in _NB_FACE_NAMES:
+            t = st.session_state[face_key][fn]
+            icon = "🔵" if t == "내부 비내력벽" else "🟠"
+            highlight = f"**{fn}**" if fn == sel_face else fn
+            st.caption(f"{icon} {highlight}: {t}")
+
+    # ── 무게 산출 ─────────────────────────────────────────────────────────
+    # 슬래브: 데크플레이트+콘크리트 180mm, 350 kg/m²
+    slab_w = (float(width) / 1000) * (float(length) / 1000) * 350.0
+
+    # 비내력벽: 전면·후면 = width×height, 좌면·우면 = length×height
+    wall_w = 0.0
+    for fn in _NB_FACE_NAMES:
+        uw = _NB_TYPES[st.session_state[face_key][fn]]["unit_weight"]
+        if fn in ("전면", "후면"):
+            area = (float(width) / 1000) * (float(height) / 1000)
+        else:
+            area = (float(length) / 1000) * (float(height) / 1000)
+        wall_w += uw * area
+
+    extra_w = slab_w + wall_w
+
+    frame_sample = Module(
         name="_preview",
         width=float(width), length=float(length), height=float(height),
         column_section=col_sec, beam_section=beam_sec,
     )
-    st.info(f"🪶 자동 산출 무게: **{sample.weight:,.0f} kg/매**")
+    frame_w = frame_sample.weight
+    total_w = frame_w + extra_w
+
+    st.info(
+        f"🪶 자동 산출 무게: **{total_w:,.0f} kg/매**  \n"
+        f"프레임 {frame_w:,.0f} kg + 슬래브 {slab_w:,.0f} kg + 비내력벽 {wall_w:,.0f} kg"
+    )
+
+    count = st.number_input("운송 수량 (EA)", 0, 500, d[6], 1, key=f"mc_{idx}")
 
     return [
         Module(
@@ -208,6 +372,7 @@ def _module_form(idx: int) -> list[Module]:
             height=float(height),
             column_section=col_sec,
             beam_section=beam_sec,
+            extra_weight_kg=extra_w,
         )
         for j in range(int(count))
     ]

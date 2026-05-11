@@ -34,7 +34,7 @@ class Section:
 
 @dataclass(frozen=True)
 class Module:
-    """수평/수직 모듈. 무게는 부재(기둥+보)에서 자동 계산."""
+    """수평/수직 모듈. 무게는 부재(기둥+보) + 슬래브 + 비내력벽에서 자동 계산."""
 
     name: str
     width: float                   # mm
@@ -42,16 +42,18 @@ class Module:
     height: float                  # mm
     column_section: Section        # 4 모서리 기둥 단면
     beam_section: Section          # 천장보·바닥보 공통 단면
+    extra_weight_kg: float = 0.0   # 슬래브 + 비내력벽 합산 추가 중량 (kg)
 
     @property
     def weight(self) -> float:
-        """프레임 무게 = 4 기둥 + 4 천장보 + 4 바닥보."""
+        """총 무게 = 프레임(4기둥+8보) + 슬래브 + 비내력벽."""
         col_total_m = (4 * self.height) / 1000.0
         beam_total_m = (4 * (self.width + self.length) * 2) / 1000.0  # 천장+바닥
-        return (
+        frame_w = (
             col_total_m * self.column_section.weight_per_m
             + beam_total_m * self.beam_section.weight_per_m
         )
+        return frame_w + self.extra_weight_kg
 
     def is_wide(self) -> bool:
         """광폭 모듈 여부 (폭 3.0m 초과 → 확장형 광폭 트레일러 필요)."""

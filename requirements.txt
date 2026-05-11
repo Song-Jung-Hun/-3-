@@ -3,5 +3,6 @@ numpy
 matplotlib
 plotly
 streamlit
+streamlit-plotly-events
 binpacking
 pytest
