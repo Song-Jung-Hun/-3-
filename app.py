@@ -126,7 +126,7 @@ with st.sidebar:
                 }
             )
         df_trucks = pd.DataFrame(rows)
-        st.dataframe(df_trucks, hide_index=True, width="stretch")
+        st.dataframe(df_trucks, hide_index=True, use_container_width=True)
         st.caption(
             "**lowbed** = 저상 트레일러 (모듈·패널 전 종류, 눕혀서 적층) / "
             "**extendable** = 확장형 광폭 트레일러 (광폭 모듈·각종 패널, 광로 전용). "
@@ -199,7 +199,8 @@ def _make_module_box_fig(
 
     fig = go.Figure()
 
-    # 4 벽면 (클릭 가능)
+    # ── 벽면 4개 (curveNumber 0=전면 1=후면 2=좌면 3=우면, 항상 고정) ──────
+    # 주의: 외곽선 Scatter3d는 반드시 이 루프 밖에서 추가해야 curveNumber가 밀리지 않음
     for face_name, (xs, ys, zs) in face_geom.items():
         ftype = face_types.get(face_name, "내부 비내력벽")
         color = _NB_TYPES[ftype]["color"]
@@ -213,21 +214,8 @@ def _make_module_box_fig(
             hovertemplate=f"<b>{face_name}</b><br>{ftype}<br><i>클릭해서 변경</i><extra></extra>",
             flatshading=True,
         ))
-        # 선택된 면 — 외곽선 강조
-        if is_sel:
-            edge_x = xs + [xs[0]]
-            edge_y = ys + [ys[0]]
-            edge_z = zs + [zs[0]]
-            fig.add_trace(go.Scatter3d(
-                x=edge_x, y=edge_y, z=edge_z,
-                mode="lines",
-                line=dict(color="red", width=6),
-                name=f"{face_name}_sel",
-                hoverinfo="skip",
-                showlegend=False,
-            ))
 
-    # 바닥·천장 (회색, curveNumber 4·5)
+    # ── 바닥·천장 (curveNumber 4·5) ─────────────────────────────────────
     for z_val, label in [(0.0, "바닥"), (h, "천장")]:
         fig.add_trace(go.Mesh3d(
             x=[0, w, w, 0], y=[0, 0, l, l], z=[z_val] * 4,
@@ -236,6 +224,18 @@ def _make_module_box_fig(
             opacity=0.4,
             name=label,
             hovertemplate=f"<b>{label}</b><extra></extra>",
+        ))
+
+    # ── 선택된 면 외곽선 강조 (curveNumber 6+, 클릭 대상 아님) ────────────
+    if selected_face and selected_face in face_geom:
+        xs, ys, zs = face_geom[selected_face]
+        fig.add_trace(go.Scatter3d(
+            x=xs + [xs[0]], y=ys + [ys[0]], z=zs + [zs[0]],
+            mode="lines",
+            line=dict(color="red", width=6),
+            name=f"{selected_face}_sel",
+            hoverinfo="skip",
+            showlegend=False,
         ))
 
     fig.update_layout(
@@ -808,14 +808,14 @@ if trip_options:
             st.markdown("**📐 Top View (평면도)**")
             st.plotly_chart(
                 draw_top_view(sel_trip, truck, spacing),
-                width="stretch",
+                use_container_width=True,
                 key=f"auto_top_{sel_trip.trip_no}",
             )
         with view_col2:
             st.markdown("**📐 Rear View (뒷면도)**")
             st.plotly_chart(
                 draw_rear_view(sel_trip, truck, spacing),
-                width="stretch",
+                use_container_width=True,
                 key=f"auto_rear_{sel_trip.trip_no}",
             )
 
@@ -826,7 +826,7 @@ if trip_options:
         )
         st.plotly_chart(
             draw_3d_view(sel_trip, truck, spacing),
-            width="stretch",
+            use_container_width=True,
             key=f"auto_3d_{sel_trip.trip_no}",
         )
 
