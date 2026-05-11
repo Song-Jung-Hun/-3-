@@ -200,12 +200,25 @@ def _max_lshape_panels_per_truck(panel: Panel, truck: Truck, sp: SpacingParams) 
 
 
 # ---------------------------------------------------------------------------
-# 공통: 새 bin 열 때 최적 트럭 선택
+# 공통: 아이템 사이즈에 가장 가까운 트럭 선택
 # ---------------------------------------------------------------------------
 
-def _best_truck(ok_trucks: list[Truck]) -> Truck:
-    """용량(길이 × 적재중량) 기준 최대 트럭 선택."""
-    return max(ok_trucks, key=lambda tr: tr.max_length * tr.max_weight)
+def _closest_fit_truck(ok_trucks: list[Truck], ref_length: float, ref_weight: float) -> Truck:
+    """아이템 사이즈에 가장 가까운 트럭 선택.
+
+    각 트럭의 '정규화된 여유' = (truck_dim - item_dim) / item_dim 합을 최소화.
+    → 딱 맞는 트럭을 고르므로 큰 트럭을 작은 화물에 낭비하지 않는다.
+
+    Args:
+        ref_length: 아이템 길이 (mm)
+        ref_weight: 아이템 무게 (kg) — 모듈은 실제 무게, 패널은 1매 무게 기준
+    """
+    def score(tr: Truck) -> float:
+        len_excess = (tr.max_length - ref_length) / max(ref_length, 1.0)
+        wt_excess  = (tr.max_weight  - ref_weight)  / max(ref_weight,  1.0)
+        return len_excess + wt_excess
+
+    return min(ok_trucks, key=score)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +260,7 @@ def _pack_modules(
             blocked.append((m, "모듈 규격이 모든 트럭/도로 한도 초과"))
             continue
 
-        best = _best_truck(ok_trucks)
+        best = _closest_fit_truck(ok_trucks, m.length, m.weight)
         trips.append(Trip(
             trip_no=next_no,
             truck=best,
@@ -337,7 +350,7 @@ def _pack_floor_panels(
             if not ok_for_new:
                 blocked.append((p, "패널 길이가 트럭 유효 길이 초과"))
                 continue
-            best = _best_truck(ok_for_new)
+            best = _closest_fit_truck(ok_for_new, p.length, p.weight)
             # 이 패널 기준 per_row 계산
             _, ppr, _ = _max_floor_panels_per_truck(p, best, sp, ds)
             ppr = max(ppr, 1)
@@ -430,7 +443,7 @@ def _pack_wall_panels(
             if not ok_for_new:
                 blocked.append((p, "벽체 패널 두께가 트럭 폭 초과"))
                 continue
-            best = _best_truck(ok_for_new)
+            best = _closest_fit_truck(ok_for_new, p.length, p.weight)
             bins.append({
                 "truck": best,
                 "items": [p],
@@ -516,7 +529,7 @@ def _pack_lshape_panels(
             if not ok_for_new:
                 blocked.append((p, "L자 패널 길이가 트럭 유효 길이 초과"))
                 continue
-            best = _best_truck(ok_for_new)
+            best = _closest_fit_truck(ok_for_new, p.length, p.weight)
             bins.append({
                 "truck": best,
                 "items": [p],
