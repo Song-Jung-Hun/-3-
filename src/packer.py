@@ -214,8 +214,9 @@ def _can_stack_on_lshape(
     if avail_w <= 0 or panel.width > avail_w:
         return False
 
-    # ② 길이
-    if panel.length > lshape.length:
+    # ② 길이 — 트럭 유효 적재 길이 이내이면 OK (L자 개별 길이에 제한 없음)
+    usable = truck.max_length - 2 * sp.truck_edge_clearance_mm
+    if panel.length > usable:
         return False
 
     # ③ 높이
