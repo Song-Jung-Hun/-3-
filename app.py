@@ -668,7 +668,11 @@ for trip in result.trips:
         if sample and sample.kind == "wall":
             extra = f"{trip.panels_per_row}열 × {trip.n_layers}단 (눕혀서 적층)"
         elif sample and sample.kind == "lshape":
-            extra = f"L자 {trip.panels_per_row}매 나란히 (적층 불가)"
+            n_stk = sum(1 for s in trip.stacked_items if s is not None)
+            if n_stk > 0:
+                extra = f"L자 {trip.panels_per_row}매 나란히 + 위에 {n_stk}매 적층"
+            else:
+                extra = f"L자 {trip.panels_per_row}매 나란히"
         else:
             extra = f"{trip.panels_per_row}열 × {trip.n_layers}단"
     elif trip.kind == "module":
@@ -790,10 +794,22 @@ if trip_options:
             "플로어 패널과 동일하게 저상/광폭 트레일러에 길이 방향으로 나란히, 위로 N단 쌓아서 운송."
         )
     elif sel_trip.items and sel_trip.items[0].kind == "lshape":
-        st.info(
-            "🔲 **L자 패널 회차** — 바닥+벽 ㄴ자 패널을 **눕혀서 길이 방향 나란히**. "
-            "벽 부분이 위로 솟아 적층 불가. Top View = 평면 배치, Rear View = ㄴ자 단면."
-        )
+        n_stk = sum(1 for s in sel_trip.stacked_items if s is not None)
+        if n_stk > 0:
+            stk_names = ", ".join(
+                s.name for s in sel_trip.stacked_items if s is not None
+            )
+            st.info(
+                f"🔲 **L자 패널 회차 (적층 있음)** — L자 패널 {sel_trip.panels_per_row}매를 나란히 배치하고, "
+                f"그 위에 **{n_stk}매가 적층**됩니다.  \n"
+                f"적층 패널: {stk_names}  \n"
+                "Top View = 녹색 점선이 적층 패널, Rear View = ㄴ자 단면 + 위 패널 표시."
+            )
+        else:
+            st.info(
+                "🔲 **L자 패널 회차** — 바닥+벽 ㄴ자 패널을 **눕혀서 길이 방향 나란히**. "
+                "Top View = 평면 배치, Rear View = ㄴ자 단면."
+            )
     else:
         st.info(
             "⬜ **플로어 패널 회차** — 패널을 눕혀서 적층. "

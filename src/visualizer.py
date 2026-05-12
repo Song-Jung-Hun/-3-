@@ -241,12 +241,16 @@ def draw_top_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
 
     elif trip.items and isinstance(trip.items[0], Panel) and trip.items[0].kind == "lshape":
         # L자 패널 — 눕혀서 길이 방향 나란히 (벽 부분이 위로 솟음)
+        # trip.items = 기저 L자 패널, trip.stacked_items = 위에 올라간 패널(또는 None)
         _edge_zones_top(fig, truck, edge)
         cursor = edge
-        n = len(trip.items)
+        n_base = len(trip.items)
+        stacked = trip.stacked_items  # list[Panel | None], len == n_base
+        n_stacked = sum(1 for s in stacked if s is not None)
+
         for k, item in enumerate(trip.items):
             cy = (truck.max_width - item.width) / 2
-            # 바닥 부분 (ㄴ자 가로 bar)
+            # L자 바닥판 전체 박스
             fig.add_shape(
                 type="rect",
                 x0=cursor, y0=cy,
@@ -255,21 +259,48 @@ def draw_top_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 fillcolor=SEAT_PALETTE[k % len(SEAT_PALETTE)],
                 opacity=0.7,
             )
+            # 벽체 위치 표시 (왼쪽 끝, 두께 = item.thickness)
+            fig.add_shape(
+                type="rect",
+                x0=cursor, y0=cy,
+                x1=cursor + item.length, y1=cy + item.thickness,
+                line=dict(color="#5C3317", width=1),
+                fillcolor="#A0522D", opacity=0.6,
+            )
+            ann_text = (
+                f"<b>{item.name}</b><br>"
+                f"{int(item.length)}×{int(item.width)}mm<br>"
+                f"벽↑{int(item.wall_height)}mm"
+            )
+            # 위에 올라간 패널이 있으면 표시
+            stk = stacked[k] if k < len(stacked) else None
+            if stk is not None:
+                # 적층 패널: 벽체 두께 바깥 영역에 그리기
+                stk_y0 = cy + item.thickness + gap / 2
+                stk_y1 = stk_y0 + stk.width
+                stk_x1 = cursor + stk.length
+                fig.add_shape(
+                    type="rect",
+                    x0=cursor, y0=stk_y0,
+                    x1=stk_x1, y1=stk_y1,
+                    line=dict(color="#1a6b3c", width=2, dash="dash"),
+                    fillcolor="rgba(46,139,87,0.45)",
+                )
+                stk_label = "L자" if stk.kind == "lshape" else ("플로어" if stk.kind == "floor" else "벽체")
+                ann_text += f"<br>▲ {stk_label} 적층: {stk.name}"
             fig.add_annotation(
                 x=cursor + item.length / 2, y=cy + item.width / 2,
-                text=(
-                    f"<b>{item.name}</b><br>"
-                    f"{int(item.length)}×{int(item.width)}mm<br>"
-                    f"벽↑{int(item.wall_height)}mm"
-                ),
+                text=ann_text,
                 showarrow=False, font=dict(size=9),
             )
             cursor += item.length + gap
+
+        stk_msg = f" + 적층 {n_stacked}매" if n_stacked > 0 else " (적층 없음)"
         fig.add_annotation(
             x=truck.max_length / 2, y=truck.max_width + 250,
             text=(
-                f"<b>L자 패널 {n}매</b> — 눕혀서 나란히 적재<br>"
-                f"※ 벽 부분이 위로 솟음 → Rear View 참조"
+                f"<b>L자 패널 {n_base}매{stk_msg}</b> — 눕혀서 나란히 적재<br>"
+                f"※ 벽 부분이 위로 솟음, 녹색 점선 = 적층 패널 → Rear View 참조"
             ),
             showarrow=False, font=dict(size=11, color="darkred"),
         )
@@ -404,36 +435,88 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
         )
 
     elif trip.items and isinstance(trip.items[0], Panel) and trip.items[0].kind == "lshape":
-        # L자 패널 단면 (ㄴ자) — 첫 번째 패널 기준 대표 단면 도식
-        WALL_THICK_VIS = 150  # 벽 두께 시각화용 추정값 (mm)
+        # L자 패널 단면 (ㄴ자) — 첫 번째 L자 패널 기준 대표 단면 도식
+        # stacked_items[0]이 있으면 위에 올라간 패널도 함께 표시
         sample = trip.items[0]
         cx = (truck.max_width - sample.width) / 2
-        # 바닥 부분 (가로 bar)
+        # 바닥판 (가로 bar)
         fig.add_shape(
             type="rect",
             x0=cx, y0=veh_h,
             x1=cx + sample.width, y1=veh_h + sample.thickness,
             line=dict(color="#8B4513", width=2),
-            fillcolor="#DEB887",
-            opacity=0.85,
+            fillcolor="#DEB887", opacity=0.85,
         )
-        # 벽 부분 (세로 bar, 왼쪽 끝에서 위로 솟음)
+        # 벽체 (세로 bar, 한쪽 끝에서 위로 솟음 — 두께는 실제값 사용)
+        wall_thick_vis = sample.thickness  # 실제 벽체 두께 사용
         fig.add_shape(
             type="rect",
             x0=cx, y0=veh_h + sample.thickness,
-            x1=cx + WALL_THICK_VIS, y1=veh_h + sample.thickness + sample.wall_height,
+            x1=cx + wall_thick_vis,
+            y1=veh_h + sample.thickness + sample.wall_height,
             line=dict(color="#8B4513", width=2),
-            fillcolor="#A0522D",
-            opacity=0.85,
+            fillcolor="#A0522D", opacity=0.85,
         )
         total_h = sample.thickness + sample.wall_height
+
+        # 적층 패널 단면 표시
+        stk0 = trip.stacked_items[0] if trip.stacked_items else None
+        if stk0 is not None:
+            stk_y0 = veh_h + sample.thickness + gap
+            if stk0.kind == "lshape":
+                # L자 위에 L자: 바닥판 + 벽체
+                stk_y1_floor = stk_y0 + stk0.thickness
+                fig.add_shape(
+                    type="rect",
+                    x0=cx + wall_thick_vis + gap,
+                    y0=stk_y0,
+                    x1=cx + wall_thick_vis + gap + stk0.width,
+                    y1=stk_y1_floor,
+                    line=dict(color="#1a6b3c", width=2),
+                    fillcolor="#90EE90", opacity=0.85,
+                )
+                fig.add_shape(
+                    type="rect",
+                    x0=cx + wall_thick_vis + gap,
+                    y0=stk_y1_floor,
+                    x1=cx + wall_thick_vis + gap + stk0.thickness,
+                    y1=stk_y1_floor + stk0.wall_height,
+                    line=dict(color="#1a6b3c", width=2),
+                    fillcolor="#228B22", opacity=0.75,
+                )
+                stk_h = stk0.thickness + stk0.wall_height
+            else:
+                # 플로어/벽체 패널: 눕혀서 적층
+                fig.add_shape(
+                    type="rect",
+                    x0=cx + wall_thick_vis + gap,
+                    y0=stk_y0,
+                    x1=cx + wall_thick_vis + gap + stk0.width,
+                    y1=stk_y0 + stk0.thickness,
+                    line=dict(color="#1a6b3c", width=2),
+                    fillcolor="#90EE90", opacity=0.85,
+                )
+                stk_h = stk0.thickness
+            stk_label = "L자" if stk0.kind == "lshape" else ("플로어" if stk0.kind == "floor" else "벽체")
+            fig.add_annotation(
+                x=cx + wall_thick_vis + gap + stk0.width / 2,
+                y=stk_y0 + stk_h / 2,
+                text=f"<b>▲ {stk_label} 적층</b><br>{stk0.name}",
+                showarrow=False, font=dict(size=9, color="#1a6b3c"),
+            )
+            effective_h = max(total_h, sample.thickness + gap + stk_h)
+        else:
+            effective_h = total_h
+
+        n_stacked = sum(1 for s in trip.stacked_items if s is not None)
+        stk_msg = f" + 적층 {n_stacked}매" if n_stacked > 0 else ""
         fig.add_annotation(
-            x=truck.max_width / 2, y=veh_h + total_h + 350,
+            x=truck.max_width / 2, y=veh_h + effective_h + 350,
             text=(
-                f"<b>L자 단면 (ㄴ자) — {len(trip.items)}매</b><br>"
+                f"<b>L자 단면 (ㄴ자) — {len(trip.items)}매{stk_msg}</b><br>"
                 f"바닥부: 폭 {int(sample.width)}mm × 두께 {int(sample.thickness)}mm<br>"
                 f"벽부: 높이 {int(sample.wall_height)}mm (위로 솟음)<br>"
-                f"총 운송 높이: {int(total_h)}mm"
+                f"최대 운송 높이: 차체 {int(veh_h)}mm + {int(effective_h)}mm"
             ),
             showarrow=False, font=dict(size=10, color="darkred"),
         )
@@ -644,13 +727,13 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             cursor_z += sample.thickness + gap   # 층간 gap (받침목 없음)
 
     elif isinstance(trip.items[0], Panel) and trip.items[0].kind == "lshape":
-        # L자 패널 — 눕혀서 나란히, 바닥 박스 + 벽 박스
-        WALL_THICK_VIS = 150  # 벽 두께 시각화용 추정값 (mm)
+        # L자 패널 — 눕혀서 나란히, 바닥판 박스 + 벽체 박스 + 적층 박스
         cursor = edge
+        stacked = trip.stacked_items  # list[Panel | None]
         for k, item in enumerate(trip.items):
             cy = (truck.max_width - item.width) / 2
             color = PALETTE_3D[k % len(PALETTE_3D)]
-            # 바닥 박스 (눕혀진 부분)
+            # 바닥판 박스 (눕혀진 슬래브)
             for tr in _box_mesh(
                 cursor, cy, veh_h,
                 cursor + item.length, cy + item.width, veh_h + item.thickness,
@@ -658,15 +741,46 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 f"{item.name} 바닥부 ({int(item.weight)}kg)",
             ):
                 fig.add_trace(tr)
-            # 벽 박스 (한쪽 끝에서 위로 솟음)
+            # 벽체 박스 (한쪽 끝에서 위로 솟음 — 실제 두께 사용)
             for tr in _box_mesh(
                 cursor, cy, veh_h + item.thickness,
-                cursor + item.length, cy + WALL_THICK_VIS,
+                cursor + item.length, cy + item.thickness,
                 veh_h + item.thickness + item.wall_height,
                 "#A0522D", 0.65,
                 f"{item.name} 벽부 (높이 {int(item.wall_height)}mm)",
             ):
                 fig.add_trace(tr)
+            # 적층 패널 박스
+            stk = stacked[k] if k < len(stacked) else None
+            if stk is not None:
+                stk_z0 = veh_h + item.thickness + gap
+                stk_cx = cy + item.thickness  # 벽체 옆 빈 공간 시작 y
+                if stk.kind == "lshape":
+                    # L자 위에 L자: 바닥판 + 벽체 박스
+                    for tr in _box_mesh(
+                        cursor, stk_cx, stk_z0,
+                        cursor + stk.length, stk_cx + stk.width, stk_z0 + stk.thickness,
+                        "#2ca02c", 0.75,
+                        f"{stk.name} 바닥부 (적층)",
+                    ):
+                        fig.add_trace(tr)
+                    for tr in _box_mesh(
+                        cursor, stk_cx, stk_z0 + stk.thickness,
+                        cursor + stk.length, stk_cx + stk.thickness,
+                        stk_z0 + stk.thickness + stk.wall_height,
+                        "#006400", 0.65,
+                        f"{stk.name} 벽부 (적층)",
+                    ):
+                        fig.add_trace(tr)
+                else:
+                    # 플로어/벽체 패널: 눕혀서
+                    for tr in _box_mesh(
+                        cursor, stk_cx, stk_z0,
+                        cursor + stk.length, stk_cx + stk.width, stk_z0 + stk.thickness,
+                        "#2ca02c", 0.75,
+                        f"{stk.name} ({int(stk.weight)}kg, 적층)",
+                    ):
+                        fig.add_trace(tr)
             cursor += item.length + gap
 
     else:

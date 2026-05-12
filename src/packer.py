@@ -41,10 +41,16 @@ class Trip:
     n_layers: int = 1
     used_length_mm: float = 0.0    # 실제 사용 길이 (화물 + 간격)
     usable_length_mm: float = 0.0  # 트럭 유효 적재 길이 (양끝 여유 제외)
+    stacked_items: list = field(default_factory=list)
+    # L자 패널 회차 전용: stacked_items[i] = items[i] 위에 올라간 Panel 또는 None
 
     @property
     def cargo_weight(self) -> float:
-        return sum(getattr(i, "weight", 0) for i in self.items)
+        base_w = sum(getattr(i, "weight", 0) for i in self.items)
+        stacked_w = sum(
+            getattr(s, "weight", 0) for s in self.stacked_items if s is not None
+        )
+        return base_w + stacked_w
 
     @property
     def total_weight(self) -> float:
@@ -167,10 +173,11 @@ def _max_floor_panels_per_truck(
 
 
 def _max_lshape_panels_per_truck(panel: Panel, truck: Truck, sp: SpacingParams) -> int:
-    """단일 사양 L자 패널 1트럭 최대 매수."""
+    """단일 사양 L자 패널 1트럭 최대 매수 (기저 배치 기준, 적층 미포함)."""
     if panel.width > truck.max_width:
         return 0
-    if panel.wall_height + truck.vehicle_height_offset > truck.max_height:
+    # L자 높이 = 바닥판(thickness) + 벽체(wall_height)
+    if panel.thickness + panel.wall_height + truck.vehicle_height_offset > truck.max_height:
         return 0
     usable = truck.max_length - 2 * sp.truck_edge_clearance_mm
     if panel.length > usable:
@@ -180,6 +187,46 @@ def _max_lshape_panels_per_truck(panel: Panel, truck: Truck, sp: SpacingParams) 
         return n_len
     n_wt = math.floor(truck.max_weight / panel.weight)
     return min(n_len, n_wt)
+
+
+# ---------------------------------------------------------------------------
+# L자 패널 적층 가능 여부 검사
+# ---------------------------------------------------------------------------
+
+def _can_stack_on_lshape(
+    panel: Panel,
+    lshape: Panel,
+    truck: Truck,
+    sp: SpacingParams,
+) -> bool:
+    """패널을 L자 패널 바닥판 위에 적층 가능한지 검사.
+
+    적층 조건:
+      ① 폭 — panel.width ≤ lshape.width − lshape.thickness − gap
+             (L자 내벽 여유: 벽체 두께와 gap만큼 빼야 패널이 안쪽에 들어감)
+      ② 길이 — panel.length ≤ lshape.length
+               (L자 바닥판 길이를 넘을 수 없음)
+      ③ 높이 — 차체 + L자 바닥판(thickness) + gap + 적층 패널 높이 ≤ truck.max_height
+               L자 단독 높이(thickness+wall_height)도 함께 확인
+    """
+    # ① 폭
+    avail_w = lshape.width - lshape.thickness - sp.panel_gap_mm
+    if avail_w <= 0 or panel.width > avail_w:
+        return False
+
+    # ② 길이
+    if panel.length > lshape.length:
+        return False
+
+    # ③ 높이
+    inner_h = truck.max_height - truck.vehicle_height_offset
+    L_h = lshape.thickness + lshape.wall_height          # L자 단독 점유 높이
+    if panel.kind == "lshape":
+        stk_h = lshape.thickness + sp.panel_gap_mm + panel.thickness + panel.wall_height
+    else:
+        stk_h = lshape.thickness + sp.panel_gap_mm + panel.thickness
+    cargo_h = max(L_h, stk_h)
+    return cargo_h <= inner_h
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +507,7 @@ def _pack_wall_panels(
 
 
 # ---------------------------------------------------------------------------
-# L자 패널 — FFD (길이 내림차순, 혼적 허용, 적층 불가)
+# L자 패널 — FFD (길이 내림차순, 혼적 허용, 적층 지원)
 # ---------------------------------------------------------------------------
 
 def _pack_lshape_panels(
@@ -469,13 +516,34 @@ def _pack_lshape_panels(
     road: RoadClass,
     sp: SpacingParams,
     start_trip_no: int,
-) -> tuple[list[Trip], list[tuple[Panel, str]]]:
-    """FFD 빈 패킹 — 길이 내림차순, 벽 부분이 위로 솟아 적층 불가."""
+    stacking_candidates: list[Panel] | None = None,
+) -> tuple[list[Trip], list[tuple[Panel, str]], list[Panel]]:
+    """L자 패널 FFD 빈 패킹 + 위에 적층 지원.
+
+    L자 패널은 트럭 바닥에 길이 방향으로 나란히 배치하고,
+    각 L자 패널 위에는 다른 패널(플로어/벽체 패널, 또는 더 작은 L자 패널)
+    1매를 적층할 수 있습니다 (_can_stack_on_lshape 조건 충족 시).
+
+    stacking_candidates — L자 빈 슬롯에 올릴 후보 패널 (플로어·벽체 패널 등).
+                          적층에 성공한 패널은 제거하고 나머지를 반환합니다.
+
+    Returns:
+        trips              — 생성된 회차 목록
+        blocked            — 배치 불가 L자 패널 목록
+        remaining_candidates — 적층 배치에 실패한 stacking_candidates
+    """
+    sc = list(stacking_candidates) if stacking_candidates else []
+
     if not panels:
-        return [], []
+        return [], [], sc
+
     compat = _lshape_compatible_trucks(trucks)
     if not compat:
-        return [], [(p, "L자 패널 운송 가능 트럭 없음 (lowbed/extendable 필요)") for p in panels]
+        return (
+            [],
+            [(p, "L자 패널 운송 가능 트럭 없음 (lowbed/extendable 필요)") for p in panels],
+            sc,
+        )
 
     blocked: list[tuple[Panel, str]] = []
     valid: list[tuple[Panel, list[Truck]]] = []
@@ -488,62 +556,128 @@ def _pack_lshape_panels(
             blocked.append((p, "운송 가능 트럭 없음"))
 
     if not valid:
-        return [], blocked
+        return [], blocked, sc
 
-    # 길이 내림차순 정렬
+    # 길이 내림차순 정렬 (FFD)
     valid.sort(key=lambda x: x[0].length, reverse=True)
 
+    # 각 bin = { truck, base_items, stacked_items, used_length, total_weight }
+    # base_items[i] ↔ stacked_items[i] (None이면 빈 슬롯)
     bins: list[dict] = []
-    next_no = start_trip_no
 
     for p, ok_trucks in valid:
         placed = False
 
-        for b in bins:
-            if b["truck"] not in ok_trucks:
-                continue
-            tr = b["truck"]
-            usable = tr.max_length - 2 * sp.truck_edge_clearance_mm
-            gap = sp.panel_gap_mm if b["items"] else 0.0
-            if b["used_length"] + gap + p.length > usable:
-                continue
-            if b["total_weight"] + p.weight > tr.max_weight:
-                continue
-            b["items"].append(p)
-            b["used_length"] += gap + p.length
-            b["total_weight"] += p.weight
-            placed = True
-            break
+        # ① 기존 bin의 빈 슬롯에 적층 (L자 위에 L자 올리기)
+        if p.kind == "lshape":
+            for b in bins:
+                if b["truck"] not in ok_trucks:
+                    continue
+                for i, (base_L, slot) in enumerate(
+                    zip(b["base_items"], b["stacked_items"])
+                ):
+                    if slot is not None:
+                        continue
+                    if not _can_stack_on_lshape(p, base_L, b["truck"], sp):
+                        continue
+                    if b["total_weight"] + p.weight > b["truck"].max_weight:
+                        continue
+                    b["stacked_items"][i] = p
+                    b["total_weight"] += p.weight
+                    placed = True
+                    break
+                if placed:
+                    break
 
+        # ② 기존 bin 트럭 바닥에 나란히 추가
         if not placed:
-            ok_for_new = [tr for tr in ok_trucks
-                          if p.length <= tr.max_length - 2 * sp.truck_edge_clearance_mm]
+            for b in bins:
+                if b["truck"] not in ok_trucks:
+                    continue
+                tr = b["truck"]
+                usable = tr.max_length - 2 * sp.truck_edge_clearance_mm
+                gap = sp.panel_gap_mm if b["base_items"] else 0.0
+                if b["used_length"] + gap + p.length > usable:
+                    continue
+                if p.width > tr.max_width:
+                    continue
+                if p.thickness + p.wall_height + tr.vehicle_height_offset > tr.max_height:
+                    continue
+                if b["total_weight"] + p.weight > tr.max_weight:
+                    continue
+                b["base_items"].append(p)
+                b["stacked_items"].append(None)
+                b["used_length"] += gap + p.length
+                b["total_weight"] += p.weight
+                placed = True
+                break
+
+        # ③ 새 bin 오픈
+        if not placed:
+            ok_for_new = [
+                tr for tr in ok_trucks
+                if (p.length <= tr.max_length - 2 * sp.truck_edge_clearance_mm
+                    and p.width <= tr.max_width
+                    and p.thickness + p.wall_height + tr.vehicle_height_offset
+                    <= tr.max_height)
+            ]
             if not ok_for_new:
-                blocked.append((p, "L자 패널 길이가 트럭 유효 길이 초과"))
+                blocked.append((p, "L자 패널 길이/폭/높이가 트럭 한도 초과"))
                 continue
             best = _closest_fit_truck(ok_for_new, p.length, p.weight)
             bins.append({
                 "truck": best,
-                "items": [p],
+                "base_items": [p],
+                "stacked_items": [None],
                 "used_length": p.length,
                 "total_weight": p.weight,
             })
 
+    # ── stacking_candidates → L자 빈 슬롯에 배치 ───────────────────────────
+    remaining_candidates: list[Panel] = []
+    if sc:
+        cands_sorted = sorted(sc, key=lambda x: x.weight, reverse=True)
+        for cand in cands_sorted:
+            placed = False
+            for b in bins:
+                for i, (base_L, slot) in enumerate(
+                    zip(b["base_items"], b["stacked_items"])
+                ):
+                    if slot is not None:
+                        continue
+                    if not _can_stack_on_lshape(cand, base_L, b["truck"], sp):
+                        continue
+                    if b["total_weight"] + cand.weight > b["truck"].max_weight:
+                        continue
+                    b["stacked_items"][i] = cand
+                    b["total_weight"] += cand.weight
+                    placed = True
+                    break
+                if placed:
+                    break
+            if not placed:
+                remaining_candidates.append(cand)
+
+    # ── bin → Trip 변환 ──────────────────────────────────────────────────────
     trips: list[Trip] = []
+    next_no = start_trip_no
     for b in bins:
         usable = b["truck"].max_length - 2 * sp.truck_edge_clearance_mm
+        ppr = len(b["base_items"])
+        has_stacked = any(s is not None for s in b["stacked_items"])
         trips.append(Trip(
             trip_no=next_no,
             truck=b["truck"],
-            items=b["items"],
-            panels_per_row=len(b["items"]),
-            n_layers=1,
+            items=b["base_items"],
+            panels_per_row=ppr,
+            n_layers=2 if has_stacked else 1,
             used_length_mm=b["used_length"],
             usable_length_mm=usable,
+            stacked_items=b["stacked_items"],
         ))
         next_no += 1
 
-    return trips, blocked
+    return trips, blocked, remaining_candidates
 
 
 # ---------------------------------------------------------------------------
@@ -675,15 +809,23 @@ def recheck_trip_with_truck(
                 f"❌ 적재 불가  ({n}매 요청 / 최대 {max_n}매)\n"
                 f"  • {n}매 × {sample.weight:.0f}kg/매 = {total_w:.0f}kg  (한도 {new_truck.max_weight:.0f}kg)"
             ), None
+        # 적층 패널도 새 트럭에서 가능한지 간단 검사
+        for i, stk in enumerate(trip.stacked_items):
+            if stk is not None and i < n:
+                if not _can_stack_on_lshape(stk, trip.items[i], new_truck, spacing):
+                    return False, (
+                        f"❌ 적층 패널 '{stk.name}'이 새 트럭에서 L자 위 적층 조건을 만족하지 않습니다."
+                    ), None
         used_l = n * sample.length + max(0, n - 1) * spacing.panel_gap_mm
         new_trip = Trip(
             trip_no=trip.trip_no,
             truck=new_truck,
             items=list(trip.items),
             panels_per_row=n,
-            n_layers=1,
+            n_layers=trip.n_layers,
             used_length_mm=used_l,
             usable_length_mm=usable,
+            stacked_items=list(trip.stacked_items),
         )
         return True, "OK", new_trip
 
@@ -774,41 +916,59 @@ def pack_items(
     road: RoadClass,
     spacing: SpacingParams = SpacingParams(),
 ) -> PackResult:
-    """모듈·패널 리스트 → 운송 회차 산정 (FFD 빈 패킹)."""
+    """모듈·패널 리스트 → 운송 회차 산정 (FFD 빈 패킹).
+
+    처리 순서:
+      1) 모듈 (1트럭=1모듈)
+      2) L자 패널 우선 배치 + 플로어·벽체 패널 적층 시도
+      3) L자 위에 올리지 못한 플로어 패널 → 별도 트립
+      4) L자 위에 올리지 못한 벽체 패널 → 별도 트립
+    """
     trips: list[Trip] = []
     blocked: list[tuple[Item, str]] = []
     next_no = 1
 
+    # 패널 종류 분류
+    floor_panels = [p for p in panels if p.kind == "floor"]
+    wall_panels  = [p for p in panels if p.kind == "wall"]
+    lshape_panels = [p for p in panels if p.kind == "lshape"]
+
     # 1) 모듈 (1 트럭 = 1 모듈)
-    mod_trips, mod_blocked = _pack_modules(modules, trucks, road, spacing, start_trip_no=next_no)
+    mod_trips, mod_blocked = _pack_modules(
+        modules, trucks, road, spacing, start_trip_no=next_no
+    )
     trips.extend(mod_trips)
     blocked.extend(mod_blocked)
     next_no += len(mod_trips)
 
-    # 2) 플로어 패널 (FFD by 무게, 적층)
-    floor_panels = [p for p in panels if p.kind == "floor"]
+    # 2) L자 패널 (우선 배치) + 플로어·벽체 패널을 L자 빈 슬롯에 적층 시도
+    stacking_candidates = floor_panels + wall_panels
+    lshape_trips, lshape_blocked, remaining_stacking = _pack_lshape_panels(
+        lshape_panels, trucks, road, spacing,
+        start_trip_no=next_no,
+        stacking_candidates=stacking_candidates if stacking_candidates else None,
+    )
+    trips.extend(lshape_trips)
+    blocked.extend(lshape_blocked)
+    next_no += len(lshape_trips)
+
+    # 적층 배치에 실패한 패널 → 종류별 재분류
+    remaining_floor = [p for p in remaining_stacking if p.kind == "floor"]
+    remaining_wall  = [p for p in remaining_stacking if p.kind == "wall"]
+
+    # 3) 플로어 패널 (FFD by 무게, 적층)
     floor_trips, floor_blocked = _pack_floor_panels(
-        floor_panels, trucks, road, spacing, start_trip_no=next_no
+        remaining_floor, trucks, road, spacing, start_trip_no=next_no
     )
     trips.extend(floor_trips)
     blocked.extend(floor_blocked)
     next_no += len(floor_trips)
 
-    # 3) 벽체 패널 (FFD by 무게, 눕혀서 적층)
-    wall_panels = [p for p in panels if p.kind == "wall"]
+    # 4) 벽체 패널 (FFD by 무게, 눕혀서 적층)
     wall_trips, wall_blocked = _pack_wall_panels(
-        wall_panels, trucks, road, spacing, start_trip_no=next_no
+        remaining_wall, trucks, road, spacing, start_trip_no=next_no
     )
     trips.extend(wall_trips)
     blocked.extend(wall_blocked)
-    next_no += len(wall_trips)
-
-    # 4) L자 패널 (FFD by 길이, 적층 불가)
-    lshape_panels = [p for p in panels if p.kind == "lshape"]
-    lshape_trips, lshape_blocked = _pack_lshape_panels(
-        lshape_panels, trucks, road, spacing, start_trip_no=next_no
-    )
-    trips.extend(lshape_trips)
-    blocked.extend(lshape_blocked)
 
     return PackResult(trips=trips, blocked=blocked)
