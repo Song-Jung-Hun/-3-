@@ -486,7 +486,7 @@ def _lshape_form(idx: int) -> list[Panel]:
     name = st.text_input("이름", value=d[0], key=f"lname_{idx}")
     width = st.number_input("폭 (mm)", 500, 5000, d[1], 100, key=f"lw_{idx}")
     length = st.number_input("바닥 길이 (mm)", 1000, 20000, d[2], 100, key=f"ll_{idx}")
-    thickness = st.number_input("두께 (mm)", 50, 1000, d[3], 10, key=f"lt_{idx}")
+    thickness = st.number_input("벽체 두께 (mm)", 50, 1000, d[3], 10, key=f"lt_{idx}")
     wall_height = st.number_input("벽 높이 (mm)", 500, 5000, d[4], 100, key=f"lwh_{idx}")
 
     beam_sec = _section_select("보", d[5], f"lbeam_{idx}")

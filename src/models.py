@@ -74,7 +74,7 @@ class Panel:
     kind: PanelKind
     width: float                          # mm
     length: float                         # mm
-    thickness: float                      # mm (콘크리트 바닥판/벽체판 두께, 무게 계산엔 미사용)
+    thickness: float                      # mm (플로어: 슬래브 두께 / 벽체·L자: 벽체 두께)
     beam_section: Section                 # 플로어: 둘레 보 / 벽체: 위·아래 보 / L자: 수평 보
     column_section: Section | None = None # 벽체·L자 패널 (양쪽 기둥)
     wall_height: float = 0.0             # L자 패널 전용 — 벽 부분 높이 (mm)
