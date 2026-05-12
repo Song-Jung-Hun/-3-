@@ -66,14 +66,14 @@ with st.sidebar:
     st.divider()
     st.subheader("📋 종류 수 선택")
     n_module_kinds = st.number_input(
-        "모듈 종류 수", min_value=0, max_value=10, value=1, step=1,
+        "모듈 종류 수", min_value=0, max_value=10, value=0, step=1,
         help="예: 침실·거실·주방을 따로 입력하려면 3 선택",
     )
     n_floor_kinds = st.number_input(
-        "플로어 패널 종류 수", min_value=0, max_value=10, value=1, step=1,
+        "플로어 패널 종류 수", min_value=0, max_value=10, value=0, step=1,
     )
     n_wall_kinds = st.number_input(
-        "벽체 패널 종류 수", min_value=0, max_value=10, value=1, step=1,
+        "벽체 패널 종류 수", min_value=0, max_value=10, value=0, step=1,
     )
     n_lshape_kinds = st.number_input(
         "L자 패널 종류 수", min_value=0, max_value=10, value=0, step=1,
