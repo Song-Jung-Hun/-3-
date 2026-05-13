@@ -100,7 +100,7 @@ with st.sidebar:
         help="결박 작업 공간. KOSHA 화물 결박 가이드 기준 150~200mm 권장.",
     )
     lshape_stack_gap = st.slider(
-        "L자 적층 수평 Gap (mm)", 0, 300, 100, 10,
+        "수평 Gap (mm)", 0, 300, 100, 10,
         help="L자 패널 벽체 면과 위에 올라가는 적층 패널 사이의 수평 여유 공간.",
     )
     spacing = SpacingParams(
