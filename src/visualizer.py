@@ -275,8 +275,8 @@ def draw_top_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             # 위에 올라간 패널이 있으면 표시
             stk = stacked[k] if k < len(stacked) else None
             if stk is not None:
-                # 적층 패널: 벽체 두께 바깥 영역에 그리기
-                stk_y0 = cy + item.thickness + gap / 2
+                # 적층 패널: 벽체 두께 + gap 띄운 위치에 그리기
+                stk_y0 = cy + item.thickness + gap
                 stk_y1 = stk_y0 + stk.width
                 stk_x1 = cursor + stk.length
                 fig.add_shape(
@@ -754,7 +754,7 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             stk = stacked[k] if k < len(stacked) else None
             if stk is not None:
                 stk_z0 = veh_h + item.thickness + gap
-                stk_cx = cy + item.thickness  # 벽체 옆 빈 공간 시작 y
+                stk_cx = cy + item.thickness + gap  # 벽체 옆 gap 띄운 위치 y
                 if stk.kind == "lshape":
                     # L자 위에 L자: 바닥판 + 벽체 박스
                     for tr in _box_mesh(
