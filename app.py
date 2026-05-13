@@ -92,8 +92,8 @@ with st.sidebar:
     st.divider()
     st.subheader("📏 패널 적재 간격")
     panel_gap = st.slider(
-        "패널 사이 Gap (mm)", 50, 200, 100, 10,
-        help="패널과 패널 사이 간격. 결박벨트·지게차 포크 진입 공간. PCI MNL-122 권장 75~100mm.",
+        "수직 Gap (mm)", 50, 200, 100, 10,
+        help="패널과 패널 사이 수직 간격. 결박벨트·지게차 포크 진입 공간. PCI MNL-122 권장 75~100mm.",
     )
     edge_clearance = st.slider(
         "트럭 양끝 여유 (mm)", 0, 500, 200, 50,
