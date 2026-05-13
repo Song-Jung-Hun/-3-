@@ -267,7 +267,7 @@ def _section_select(label: str, default_name: str, key: str) -> Section:
 
 def _module_form(idx: int) -> list[Module]:
     d = MODULE_DEFAULTS[idx] if idx < len(MODULE_DEFAULTS) else MODULE_DEFAULTS[-1]
-    name   = st.text_input("이름",          value=d[0], key=f"mname_{idx}")
+    name   = st.text_input("이름",          value=f"모듈 {idx + 1}", key=f"mname_{idx}")
     width  = st.number_input("폭 (mm)",     1000, 5000,  d[1], 100, key=f"mw_{idx}")
     length = st.number_input("길이 (mm)",   2000, 20000, d[2], 100, key=f"ml_{idx}")
     height = st.number_input("높이 (mm)",   1500, 5000,  d[3], 100, key=f"mh_{idx}")
@@ -380,7 +380,8 @@ def _module_form(idx: int) -> list[Module]:
 
 def _panel_form(idx: int, kind: str, defaults: list, key_prefix: str) -> list[Panel]:
     d = defaults[idx] if idx < len(defaults) else defaults[-1]
-    name = st.text_input("이름", value=d[0], key=f"{key_prefix}name_{idx}")
+    _kind_label = {"floor": "플로어 패널", "wall": "벽체 패널", "lshape": "L자 패널"}
+    name = st.text_input("이름", value=f"{_kind_label.get(kind, '패널')} {idx + 1}", key=f"{key_prefix}name_{idx}")
     if kind == "wall":
         width  = st.number_input("층고 — 트럭 폭 방향 (mm)", 500,  6000, d[1], 100, key=f"{key_prefix}w_{idx}")
         length = st.number_input("가로 스팬 — 트럭 길이 방향 (mm)", 500, 20000, d[2], 100, key=f"{key_prefix}l_{idx}")
@@ -483,7 +484,7 @@ def _panel_form(idx: int, kind: str, defaults: list, key_prefix: str) -> list[Pa
 
 def _lshape_form(idx: int) -> list[Panel]:
     d = LSHAPE_DEFAULTS[idx] if idx < len(LSHAPE_DEFAULTS) else LSHAPE_DEFAULTS[-1]
-    name = st.text_input("이름", value=d[0], key=f"lname_{idx}")
+    name = st.text_input("이름", value=f"L자 패널 {idx + 1}", key=f"lname_{idx}")
     width = st.number_input("폭 (mm)", 500, 5000, d[1], 100, key=f"lw_{idx}")
     length = st.number_input("바닥 길이 (mm)", 1000, 20000, d[2], 100, key=f"ll_{idx}")
     thickness = st.number_input("벽체 두께 (mm)", 50, 1000, d[3], 10, key=f"lt_{idx}")
