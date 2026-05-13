@@ -209,8 +209,8 @@ def _can_stack_on_lshape(
       ③ 높이 — 차체 + L자 바닥판(thickness) + gap + 적층 패널 높이 ≤ truck.max_height
                L자 단독 높이(thickness+wall_height)도 함께 확인
     """
-    # ① 폭
-    avail_w = lshape.width - lshape.thickness - sp.panel_gap_mm
+    # ① 폭 — 벽체 두께 + 수평 Gap(lshape_stack_gap_mm)을 빼야 적층 패널이 들어감
+    avail_w = lshape.width - lshape.thickness - sp.lshape_stack_gap_mm
     if avail_w <= 0 or panel.width > avail_w:
         return False
 

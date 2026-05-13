@@ -275,8 +275,8 @@ def draw_top_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             # 위에 올라간 패널이 있으면 표시
             stk = stacked[k] if k < len(stacked) else None
             if stk is not None:
-                # 적층 패널: 벽체 두께 + gap 띄운 위치에 그리기
-                stk_y0 = cy + item.thickness + gap
+                # 적층 패널: 벽체 두께 + 수평 Gap 띄운 위치에 그리기
+                stk_y0 = cy + item.thickness + sp.lshape_stack_gap_mm
                 stk_y1 = stk_y0 + stk.width
                 stk_x1 = cursor + stk.length
                 fig.add_shape(
@@ -462,24 +462,25 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
         # 적층 패널 단면 표시
         stk0 = trip.stacked_items[0] if trip.stacked_items else None
         if stk0 is not None:
-            stk_y0 = veh_h + sample.thickness + gap
+            h_gap = sp.lshape_stack_gap_mm   # 수평 Gap (벽체↔적층 패널)
+            stk_y0 = veh_h + sample.thickness + gap   # 수직 Gap (바닥판↔적층 패널)
             if stk0.kind == "lshape":
                 # L자 위에 L자: 바닥판 + 벽체
                 stk_y1_floor = stk_y0 + stk0.thickness
                 fig.add_shape(
                     type="rect",
-                    x0=cx + wall_thick_vis + gap,
+                    x0=cx + wall_thick_vis + h_gap,
                     y0=stk_y0,
-                    x1=cx + wall_thick_vis + gap + stk0.width,
+                    x1=cx + wall_thick_vis + h_gap + stk0.width,
                     y1=stk_y1_floor,
                     line=dict(color="#1a6b3c", width=2),
                     fillcolor="#90EE90", opacity=0.85,
                 )
                 fig.add_shape(
                     type="rect",
-                    x0=cx + wall_thick_vis + gap,
+                    x0=cx + wall_thick_vis + h_gap,
                     y0=stk_y1_floor,
-                    x1=cx + wall_thick_vis + gap + stk0.thickness,
+                    x1=cx + wall_thick_vis + h_gap + stk0.thickness,
                     y1=stk_y1_floor + stk0.wall_height,
                     line=dict(color="#1a6b3c", width=2),
                     fillcolor="#228B22", opacity=0.75,
@@ -489,9 +490,9 @@ def draw_rear_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
                 # 플로어/벽체 패널: 눕혀서 적층
                 fig.add_shape(
                     type="rect",
-                    x0=cx + wall_thick_vis + gap,
+                    x0=cx + wall_thick_vis + h_gap,
                     y0=stk_y0,
-                    x1=cx + wall_thick_vis + gap + stk0.width,
+                    x1=cx + wall_thick_vis + h_gap + stk0.width,
                     y1=stk_y0 + stk0.thickness,
                     line=dict(color="#1a6b3c", width=2),
                     fillcolor="#90EE90", opacity=0.85,
@@ -754,7 +755,7 @@ def draw_3d_view(trip: Trip, truck: Truck, sp: SpacingParams) -> go.Figure:
             stk = stacked[k] if k < len(stacked) else None
             if stk is not None:
                 stk_z0 = veh_h + item.thickness + gap
-                stk_cx = cy + item.thickness + gap  # 벽체 옆 gap 띄운 위치 y
+                stk_cx = cy + item.thickness + sp.lshape_stack_gap_mm  # 벽체 옆 수평 Gap 위치 y
                 if stk.kind == "lshape":
                     # L자 위에 L자: 바닥판 + 벽체 박스
                     for tr in _box_mesh(

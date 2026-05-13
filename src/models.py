@@ -124,12 +124,14 @@ class Truck:
 class SpacingParams:
     """패널 적재 간격 (mm).
 
-    panel_gap_mm       — 패널 사이 간격 (같은 열 내, 적층 층 사이 모두 동일 적용)
+    panel_gap_mm            — 패널 사이 수평·수직 간격 (같은 열 내, 적층 층 사이)
     truck_edge_clearance_mm — 트럭 양끝 결박 여유
+    lshape_stack_gap_mm     — L자 패널 벽체와 적층 패널 사이 수평 간격
     """
 
     panel_gap_mm: float = 100.0
     truck_edge_clearance_mm: float = 200.0
+    lshape_stack_gap_mm: float = 100.0
 
 
 @dataclass(frozen=True)
