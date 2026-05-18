@@ -865,33 +865,47 @@ st.caption(
     "화면에서 확인하거나 CSV로 내려받을 수 있습니다."
 )
 
-# ── 운송 단가 입력 (B방식: km당 단가 × 왕복 거리 × 회차 수) ─────────────────
+# ── 운송 단가 입력 ─────────────────────────────────────────────────────────
 with st.expander("💰 운송 단가 설정 (경제성 계산용)", expanded=True):
-    st.caption(
-        "**계산식: km당 단가 × 왕복 거리 × 회차 수**  \n"
-        "거리가 달라지면 비용이 자동으로 반영됩니다. "
-        "아래 기본값은 한국 특수 트레일러 실무 참고치입니다. 실제 견적으로 교체해서 사용하세요."
-    )
-    cost_col1, cost_col2 = st.columns(2)
-    with cost_col1:
-        rate_lowbed = st.number_input(
-            "저상 트레일러 단가 (원/km)",
-            min_value=0, max_value=100_000, value=3_500, step=100,
-            help="25t급 저상 트레일러. 실무 참고치 3,000~4,000원/km.",
-            format="%d",
-        )
-    with cost_col2:
-        rate_extendable = st.number_input(
-            "광폭 트레일러 단가 (원/km)",
-            min_value=0, max_value=100_000, value=5_000, step=100,
-            help="확장형 광폭 트레일러. 광폭 운행 허가비 포함. 실무 참고치 4,500~6,000원/km.",
-            format="%d",
-        )
     round_trip_km = distance_km * 2
+
+    # 저상 트레일러: 대한건설협회 건설기계 경비산출표 2025 기반
+    st.markdown("**🏗 저상 트레일러 — 대한건설협회 건설기계 경비산출표 (2025년, 코드 2702)**")
+    st.caption(
+        "계산식: 왕복거리 ÷ 평균속도 × 시간당 기계경비  \n"
+        "출처: 대한건설협회 건설기계 경비산출표 2025년, 코드 2702 (트럭트레일러/저상트레일러)"
+    )
+    speed_kmh = st.slider(
+        "평균 주행 속도 (km/h)", 20, 80, 40, 5,
+        help="표준품셈 기준 40km/h. 도심 구간이 많으면 낮게, 고속도로 위주면 높게 설정.",
+    )
+    lowbed_preview = []
+    for t in trucks:
+        if t.truck_type == "lowbed" and t.hourly_rate_krw > 0 and speed_kmh > 0:
+            hours = round_trip_km / speed_kmh
+            lowbed_preview.append({
+                "차량": t.name,
+                "시간당 단가 (원/hr)": f"{t.hourly_rate_krw:,}",
+                "주행 시간 (왕복)": f"{hours:.2f} hr",
+                f"1회차 예상비용 (왕복 {round_trip_km:.0f}km)": f"{int(hours * t.hourly_rate_krw):,} 원",
+            })
+    if lowbed_preview:
+        st.dataframe(pd.DataFrame(lowbed_preview), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # 광폭·A-frame: 공식 자료 없음 — 직접 입력
+    st.markdown("**🚛 광폭·A-frame 트레일러 단가 (공식 자료 미확인 — 직접 입력)**")
+    st.caption("광폭·A-frame 트레일러는 공개된 기계경비 산출 기준이 없어 km당 단가 직접 입력 방식을 사용합니다.")
+    rate_extendable = st.number_input(
+        "광폭·A-frame 트레일러 단가 (원/km)",
+        min_value=0, max_value=100_000, value=5_000, step=100,
+        help="확장형 광폭 트레일러 및 A-frame 트레일러. 광폭 운행 허가비 포함. 실무 참고치 4,500~6,000원/km.",
+        format="%d",
+    )
     st.caption(
         f"현재 왕복 거리 **{round_trip_km:.0f}km** 기준  ·  "
-        f"저상 1회차 = **{int(rate_lowbed * round_trip_km):,}원**  ·  "
-        f"광폭 1회차 = **{int(rate_extendable * round_trip_km):,}원**"
+        f"광폭·A-frame 1회차 = **{int(rate_extendable * round_trip_km):,}원**"
     )
 
 # ── ① 입력 아이템 요약표 ────────────────────────────────────────────────────
@@ -947,8 +961,10 @@ st.markdown("### ② 회차별 적재 결과")
 trip_summary_rows = []
 for trip in result.trips:
     truck_type = trip.truck.truck_type
-    rate = rate_extendable if truck_type == "extendable" else rate_lowbed
-    trip_cost = int(rate * round_trip_km)   # 왕복 거리 × km당 단가
+    if truck_type == "lowbed" and trip.truck.hourly_rate_krw > 0 and speed_kmh > 0:
+        trip_cost = int((round_trip_km / speed_kmh) * trip.truck.hourly_rate_krw)
+    else:
+        trip_cost = int(rate_extendable * round_trip_km)
     item_names = ", ".join(
         {i.name.rsplit("-", 1)[0] for i in trip.items}
     )
@@ -974,19 +990,23 @@ if not df_trip_summary.empty:
 # ── ③ 경제성 요약 ──────────────────────────────────────────────────────────
 st.markdown("### ③ 경제성 요약")
 
-lowbed_trips     = sum(1 for t in result.trips if t.truck.truck_type != "extendable")
-extendable_trips = sum(1 for t in result.trips if t.truck.truck_type == "extendable")
+lowbed_trips     = sum(1 for t in result.trips if t.truck.truck_type == "lowbed")
+extendable_trips = sum(1 for t in result.trips if t.truck.truck_type != "lowbed")
 total_cargo_weight = sum(t.cargo_weight for t in result.trips)
 total_round_km   = result.total_trips * round_trip_km
 
-cost_lowbed_total     = int(rate_lowbed     * round_trip_km * lowbed_trips)
+cost_lowbed_total = sum(
+    int((round_trip_km / speed_kmh) * t.truck.hourly_rate_krw)
+    for t in result.trips
+    if t.truck.truck_type == "lowbed" and t.truck.hourly_rate_krw > 0 and speed_kmh > 0
+)
 cost_extendable_total = int(rate_extendable * round_trip_km * extendable_trips)
 total_cost = cost_lowbed_total + cost_extendable_total
 
 econ_col1, econ_col2, econ_col3, econ_col4, econ_col5 = st.columns(5)
 econ_col1.metric("총 회차", f"{result.total_trips} 회")
 econ_col2.metric("저상 트레일러", f"{lowbed_trips} 회")
-econ_col3.metric("광폭 트레일러", f"{extendable_trips} 회")
+econ_col3.metric("광폭·A-frame", f"{extendable_trips} 회")
 econ_col4.metric("총 운송 거리", f"{total_round_km:,.0f} km")
 econ_col5.metric("예상 운송비 합계", f"{total_cost:,} 원")
 
@@ -997,22 +1017,22 @@ econ_rows = [
     {"항목": "총 회차",               "값": f"{result.total_trips} 회"},
     {"항목": "  └ 모듈 회차",          "값": f"{result.module_trips} 회"},
     {"항목": "  └ 패널 회차",          "값": f"{result.panel_trips} 회"},
-    {"항목": "  └ 저상 트레일러",       "값": f"{lowbed_trips} 회"},
-    {"항목": "  └ 광폭 트레일러",       "값": f"{extendable_trips} 회"},
+    {"항목": "  └ 저상 트레일러",          "값": f"{lowbed_trips} 회"},
+    {"항목": "  └ 광폭·A-frame 트레일러", "값": f"{extendable_trips} 회"},
     {"항목": "총 왕복 운송 거리",       "값": f"{total_round_km:,.0f} km"},
     {"항목": "총 화물 중량",            "값": f"{total_cargo_weight:,.0f} kg"},
     {"항목": "평균 적재율",             "값": f"{result.avg_utilization:.1f} %"},
-    {"항목": "저상 트레일러 단가",       "값": f"{rate_lowbed:,} 원/km"},
-    {"항목": "광폭 트레일러 단가",       "값": f"{rate_extendable:,} 원/km"},
-    {"항목": "저상 운송비 소계",         "값": f"{cost_lowbed_total:,} 원  ({lowbed_trips}회 × {round_trip_km:.0f}km × {rate_lowbed:,}원/km)"},
-    {"항목": "광폭 운송비 소계",         "값": f"{cost_extendable_total:,} 원  ({extendable_trips}회 × {round_trip_km:.0f}km × {rate_extendable:,}원/km)"},
+    {"항목": "저상 트레일러 단가 산출기준",    "값": f"건설기계 경비산출표 2025 코드 2702 / 평균속도 {speed_kmh}km/h"},
+    {"항목": "광폭·A-frame 트레일러 단가",   "값": f"{rate_extendable:,} 원/km"},
+    {"항목": "저상 운송비 소계",             "값": f"{cost_lowbed_total:,} 원  ({lowbed_trips}회 × 왕복{round_trip_km:.0f}km ÷ {speed_kmh}km/h × 시간당 단가)"},
+    {"항목": "광폭·A-frame 운송비 소계",     "값": f"{cost_extendable_total:,} 원  ({extendable_trips}회 × {round_trip_km:.0f}km × {rate_extendable:,}원/km)"},
     {"항목": "예상 운송비 합계",         "값": f"{total_cost:,} 원"},
 ]
 df_econ = pd.DataFrame(econ_rows)
 st.dataframe(df_econ, use_container_width=True, hide_index=True)
 st.caption(
-    "⚠ 운송비는 한국 특수 트레일러 실무 참고치(3,000~6,000원/km) 기반 추정값입니다. "
-    "실제 견적과 다를 수 있으며, 광폭 허가비·에스코트비·야간 운행비는 별도입니다."
+    "⚠ 저상 트레일러 운송비: 대한건설협회 건설기계 경비산출표 2025년 코드 2702 (트럭트레일러/저상트레일러) 기준.  \n"
+    "광폭·A-frame 운송비: 공개 기준 없음 — 직접 입력값 사용. 광폭 허가비·에스코트비·야간 운행비는 별도입니다."
 )
 
 # ── CSV 다운로드 ────────────────────────────────────────────────────────────

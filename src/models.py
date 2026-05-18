@@ -118,6 +118,7 @@ class Truck:
     max_height: float
     max_weight: float
     vehicle_height_offset: float = 700.0  # 차체 높이 (저상 평균 0.7m)
+    hourly_rate_krw: float = 0.0          # 시간당 기계경비 (원/hr). lowbed만 적용. 출처: 대한건설협회 건설기계 경비산출표 2025, 코드 2702
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,8 @@
     "max_width": 3000,
     "max_height": 4500,
     "max_weight": 24000,
-    "vehicle_height_offset": 700
+    "vehicle_height_offset": 700,
+    "hourly_rate_krw": 88264
   },
   {
     "name": "초저상 트레일러 25톤 (Ultra Low-bed)",
@@ -15,7 +16,8 @@
     "max_width": 3000,
     "max_height": 4500,
     "max_weight": 25000,
-    "vehicle_height_offset": 400
+    "vehicle_height_offset": 400,
+    "hourly_rate_krw": 88264
   },
   {
     "name": "2축 소형 저상 트레일러 15톤",
@@ -24,7 +26,8 @@
     "max_width": 3000,
     "max_height": 4200,
     "max_weight": 15000,
-    "vehicle_height_offset": 700
+    "vehicle_height_offset": 700,
+    "hourly_rate_krw": 65504
   },
   {
     "name": "광폭 슬라이드 트레일러 28톤 (Extendable)",
@@ -33,7 +36,8 @@
     "max_width": 3400,
     "max_height": 4500,
     "max_weight": 28000,
-    "vehicle_height_offset": 700
+    "vehicle_height_offset": 700,
+    "hourly_rate_krw": 0
   },
   {
     "name": "A-frame 장착 평판 트레일러 24톤",
@@ -42,6 +46,7 @@
     "max_width": 3000,
     "max_height": 4500,
     "max_weight": 24000,
-    "vehicle_height_offset": 700
+    "vehicle_height_offset": 700,
+    "hourly_rate_krw": 0
   }
 ]
